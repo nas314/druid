@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.indexing.overlord;
@@ -30,6 +32,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.inject.Inject;
+import com.metamx.common.ISE;
 import com.metamx.common.Pair;
 import com.metamx.common.guava.Comparators;
 import com.metamx.common.guava.FunctionalIterable;
@@ -52,7 +55,7 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Remembers which tasks have locked which intervals. Tasks are permitted to lock an interval if no other task
+ * Remembers which activeTasks have locked which intervals. Tasks are permitted to lock an interval if no other task
  * outside their group has locked an overlapping interval for the same datasource. When a task locks an interval,
  * it is assigned a version string that it can use to publish segments.
  */
@@ -65,6 +68,10 @@ public class TaskLockbox
   private final Condition lockReleaseCondition = giant.newCondition();
 
   private static final EmittingLogger log = new EmittingLogger(TaskLockbox.class);
+
+  // Stores List of Active Tasks. TaskLockbox will only grant locks to active activeTasks.
+  // this set should be accessed under the giant lock.
+  private final Set<String> activeTasks = Sets.newHashSet();
 
   @Inject
   public TaskLockbox(
@@ -83,8 +90,10 @@ public class TaskLockbox
 
     try {
       // Load stuff from taskStorage first. If this fails, we don't want to lose all our locks.
+      final Set<String> storedActiveTasks = Sets.newHashSet();
       final List<Pair<Task, TaskLock>> storedLocks = Lists.newArrayList();
       for (final Task task : taskStorage.getActiveTasks()) {
+        storedActiveTasks.add(task.getId());
         for (final TaskLock taskLock : taskStorage.getLocks(task.getId())) {
           storedLocks.add(Pair.of(task, taskLock));
         }
@@ -103,8 +112,9 @@ public class TaskLockbox
         }
       };
       running.clear();
+      activeTasks.clear();
+      activeTasks.addAll(storedActiveTasks);
       // Bookkeeping for a log message at the end
-      final Set<String> uniqueTaskIds = Sets.newHashSet();
       int taskLockCount = 0;
       for (final Pair<Task, TaskLock> taskAndLock : byVersionOrdering.sortedCopy(storedLocks)) {
         final Task task = taskAndLock.lhs;
@@ -114,7 +124,6 @@ public class TaskLockbox
           log.warn("WTF?! Got lock with empty interval for task: %s", task.getId());
           continue;
         }
-        uniqueTaskIds.add(task.getId());
         final Optional<TaskLock> acquiredTaskLock = tryLock(
             task,
             savedTaskLock.getInterval(),
@@ -147,9 +156,9 @@ public class TaskLockbox
         }
       }
       log.info(
-          "Synced %,d locks for %,d tasks from storage (%,d locks ignored).",
+          "Synced %,d locks for %,d activeTasks from storage (%,d locks ignored).",
           taskLockCount,
-          uniqueTaskIds.size(),
+          activeTasks.size(),
           storedLocks.size() - taskLockCount
       );
     } finally {
@@ -170,10 +179,8 @@ public class TaskLockbox
   public TaskLock lock(final Task task, final Interval interval) throws InterruptedException
   {
     giant.lock();
-
     try {
       Optional<TaskLock> taskLock;
-
       while (!(taskLock = tryLock(task, interval)).isPresent()) {
         lockReleaseCondition.await();
       }
@@ -192,6 +199,7 @@ public class TaskLockbox
    * @param interval         interval to lock
    *
    * @return lock version if lock was acquired, absent otherwise
+   * @throws IllegalStateException if the task is not a valid active task
    */
   public Optional<TaskLock> tryLock(final Task task, final Interval interval)
   {
@@ -210,12 +218,16 @@ public class TaskLockbox
    * @param preferredVersion use this version string if one has not yet been assigned
    *
    * @return lock version if lock was acquired, absent otherwise
+   * @throws IllegalStateException if the task is not a valid active task
    */
   private Optional<TaskLock> tryLock(final Task task, final Interval interval, final Optional<String> preferredVersion)
   {
     giant.lock();
 
     try {
+      if(!activeTasks.contains(task.getId())){
+        throw new ISE("Unable to grant lock to inactive Task [%s]", task.getId());
+      }
       Preconditions.checkArgument(interval.toDurationMillis() > 0, "interval empty");
       final String dataSource = task.getDataSource();
       final List<TaskLockPosse> foundPosses = findLockPossesForInterval(dataSource, interval);
@@ -310,13 +322,13 @@ public class TaskLockbox
     try {
       return Lists.transform(
           findLockPossesForTask(task), new Function<TaskLockPosse, TaskLock>()
-      {
-        @Override
-        public TaskLock apply(TaskLockPosse taskLockPosse)
-        {
-          return taskLockPosse.getTaskLock();
-        }
-      }
+          {
+            @Override
+            public TaskLock apply(TaskLockPosse taskLockPosse)
+            {
+              return taskLockPosse.getTaskLock();
+            }
+          }
       );
     } finally {
       giant.unlock();
@@ -338,7 +350,7 @@ public class TaskLockbox
       final String dataSource = task.getDataSource();
       final NavigableMap<Interval, TaskLockPosse> dsRunning = running.get(dataSource);
 
-      // So we can alert if tasks try to release stuff they don't have
+      // So we can alert if activeTasks try to release stuff they don't have
       boolean removed = false;
 
       if(dsRunning != null) {
@@ -388,17 +400,22 @@ public class TaskLockbox
   }
 
   /**
-   * Release all locks for a task. Does nothing if the task is not currently locked.
+   * Release all locks for a task and remove task from set of active tasks. Does nothing if the task is not currently locked or not an active task.
    *
    * @param task task to unlock
    */
-  public void unlock(final Task task)
+  public void remove(final Task task)
   {
     giant.lock();
-
     try {
-      for(final TaskLockPosse taskLockPosse : findLockPossesForTask(task)) {
-        unlock(task, taskLockPosse.getTaskLock().getInterval());
+      try {
+        log.info("Removing task[%s] from activeTasks", task.getId());
+        for (final TaskLockPosse taskLockPosse : findLockPossesForTask(task)) {
+          unlock(task, taskLockPosse.getTaskLock().getInterval());
+        }
+      }
+      finally {
+        activeTasks.remove(task.getId());
       }
     }
     finally {
@@ -499,6 +516,17 @@ public class TaskLockbox
       }
     }
     finally {
+      giant.unlock();
+    }
+  }
+
+  public void add(Task task)
+  {
+    giant.lock();
+    try {
+      log.info("Adding task[%s] to activeTasks", task.getId());
+      activeTasks.add(task.getId());
+    } finally {
       giant.unlock();
     }
   }

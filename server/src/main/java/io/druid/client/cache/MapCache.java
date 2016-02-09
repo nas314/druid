@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.client.cache;
@@ -20,6 +22,7 @@ package io.druid.client.cache;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.primitives.Ints;
+import com.metamx.emitter.service.ServiceEmitter;
 
 import java.nio.ByteBuffer;
 import java.util.Collections;
@@ -102,7 +105,10 @@ public class MapCache implements Cache
   {
     Map<NamedKey, byte[]> retVal = Maps.newHashMap();
     for (NamedKey key : keys) {
-      retVal.put(key, get(key));
+      final byte[] value = get(key);
+      if (value != null) {
+        retVal.put(key, value);
+      }
     }
     return retVal;
   }
@@ -132,7 +138,7 @@ public class MapCache implements Cache
           toRemove.add(next);
         }
       }
-      for(ByteBuffer key : toRemove) {
+      for (ByteBuffer key : toRemove) {
         baseMap.remove(key);
       }
     }
@@ -162,5 +168,11 @@ public class MapCache implements Cache
   public boolean isLocal()
   {
     return true;
+  }
+
+  @Override
+  public void doMonitor(ServiceEmitter emitter)
+  {
+    // No special monitoring
   }
 }

@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.segment.indexing;
@@ -20,6 +22,7 @@ package io.druid.segment.indexing;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.io.Files;
+import io.druid.segment.IndexSpec;
 import io.druid.segment.realtime.plumber.IntervalStartVersioningPolicy;
 import io.druid.segment.realtime.plumber.RejectionPolicyFactory;
 import io.druid.segment.realtime.plumber.ServerTimeRejectionPolicyFactory;
@@ -42,10 +45,8 @@ public class RealtimeTuningConfig implements TuningConfig
   private static final RejectionPolicyFactory defaultRejectionPolicyFactory = new ServerTimeRejectionPolicyFactory();
   private static final int defaultMaxPendingPersists = 0;
   private static final ShardSpec defaultShardSpec = new NoneShardSpec();
-  private static final boolean defaultPersistInHeap = false;
-  private static final boolean defaultIngestOffheap = false;
-  private static final int defaultBufferSize = 128 * 1024* 1024; // 128M
-
+  private static final IndexSpec defaultIndexSpec = new IndexSpec();
+  private static final Boolean defaultBuildV9Directly = Boolean.FALSE;
 
   // Might make sense for this to be a builder
   public static RealtimeTuningConfig makeDefaultTuningConfig()
@@ -59,9 +60,10 @@ public class RealtimeTuningConfig implements TuningConfig
         defaultRejectionPolicyFactory,
         defaultMaxPendingPersists,
         defaultShardSpec,
-        defaultPersistInHeap,
-        defaultIngestOffheap,
-        defaultBufferSize
+        defaultIndexSpec,
+        defaultBuildV9Directly,
+        0,
+        0
     );
   }
 
@@ -73,9 +75,10 @@ public class RealtimeTuningConfig implements TuningConfig
   private final RejectionPolicyFactory rejectionPolicyFactory;
   private final int maxPendingPersists;
   private final ShardSpec shardSpec;
-  private final boolean persistInHeap;
-  private final boolean ingestOffheap;
-  private final int bufferSize;
+  private final IndexSpec indexSpec;
+  private final Boolean buildV9Directly;
+  private final int persistThreadPriority;
+  private final int mergeThreadPriority;
 
   @JsonCreator
   public RealtimeTuningConfig(
@@ -87,9 +90,10 @@ public class RealtimeTuningConfig implements TuningConfig
       @JsonProperty("rejectionPolicy") RejectionPolicyFactory rejectionPolicyFactory,
       @JsonProperty("maxPendingPersists") Integer maxPendingPersists,
       @JsonProperty("shardSpec") ShardSpec shardSpec,
-      @JsonProperty("persistInHeap") Boolean persistInHeap,
-      @JsonProperty("ingestOffheap") Boolean ingestOffheap,
-      @JsonProperty("buffersize") Integer bufferSize
+      @JsonProperty("indexSpec") IndexSpec indexSpec,
+      @JsonProperty("buildV9Directly") Boolean buildV9Directly,
+      @JsonProperty("persistThreadPriority") int persistThreadPriority,
+      @JsonProperty("mergeThreadPriority") int mergeThreadPriority
   )
   {
     this.maxRowsInMemory = maxRowsInMemory == null ? defaultMaxRowsInMemory : maxRowsInMemory;
@@ -104,10 +108,10 @@ public class RealtimeTuningConfig implements TuningConfig
                                   : rejectionPolicyFactory;
     this.maxPendingPersists = maxPendingPersists == null ? defaultMaxPendingPersists : maxPendingPersists;
     this.shardSpec = shardSpec == null ? defaultShardSpec : shardSpec;
-    this.persistInHeap = persistInHeap == null ? defaultPersistInHeap : persistInHeap;
-    this.ingestOffheap = ingestOffheap == null ? defaultIngestOffheap : ingestOffheap;
-    this.bufferSize = bufferSize == null ? defaultBufferSize : bufferSize;
-
+    this.indexSpec = indexSpec == null ? defaultIndexSpec : indexSpec;
+    this.buildV9Directly = buildV9Directly == null ? defaultBuildV9Directly : buildV9Directly;
+    this.mergeThreadPriority = mergeThreadPriority;
+    this.persistThreadPriority = persistThreadPriority;
   }
 
   @JsonProperty
@@ -159,19 +163,26 @@ public class RealtimeTuningConfig implements TuningConfig
   }
 
   @JsonProperty
-  public boolean isPersistInHeap()
+  public IndexSpec getIndexSpec()
   {
-    return persistInHeap;
+    return indexSpec;
   }
 
   @JsonProperty
-  public boolean isIngestOffheap(){
-    return ingestOffheap;
+  public Boolean getBuildV9Directly()
+  {
+    return buildV9Directly;
+  }
+
+  public int getPersistThreadPriority()
+  {
+    return this.persistThreadPriority;
   }
 
   @JsonProperty
-  public int getBufferSize(){
-    return bufferSize;
+  public int getMergeThreadPriority()
+  {
+    return this.mergeThreadPriority;
   }
 
   public RealtimeTuningConfig withVersioningPolicy(VersioningPolicy policy)
@@ -185,9 +196,10 @@ public class RealtimeTuningConfig implements TuningConfig
         rejectionPolicyFactory,
         maxPendingPersists,
         shardSpec,
-        persistInHeap,
-        ingestOffheap,
-        bufferSize
+        indexSpec,
+        buildV9Directly,
+        persistThreadPriority,
+        mergeThreadPriority
     );
   }
 
@@ -202,9 +214,10 @@ public class RealtimeTuningConfig implements TuningConfig
         rejectionPolicyFactory,
         maxPendingPersists,
         shardSpec,
-        persistInHeap,
-        ingestOffheap,
-        bufferSize
+        indexSpec,
+        buildV9Directly,
+        persistThreadPriority,
+        mergeThreadPriority
     );
   }
 }

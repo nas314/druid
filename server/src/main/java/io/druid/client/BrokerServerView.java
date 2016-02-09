@@ -1,29 +1,31 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Function;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Ordering;
 import com.google.inject.Inject;
 import com.metamx.common.logger.Logger;
+import com.metamx.emitter.service.ServiceEmitter;
 import com.metamx.http.client.HttpClient;
 import io.druid.client.selector.QueryableDruidServer;
 import io.druid.client.selector.ServerSelector;
@@ -37,13 +39,10 @@ import io.druid.query.QueryToolChestWarehouse;
 import io.druid.query.QueryWatcher;
 import io.druid.server.coordination.DruidServerMetadata;
 import io.druid.timeline.DataSegment;
-import io.druid.timeline.TimelineLookup;
-import io.druid.timeline.UnionTimeLineLookup;
 import io.druid.timeline.VersionedIntervalTimeline;
 import io.druid.timeline.partition.PartitionChunk;
 
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
@@ -67,6 +66,7 @@ public class BrokerServerView implements TimelineServerView
   private final HttpClient httpClient;
   private final ServerInventoryView baseView;
   private final TierSelectorStrategy tierSelectorStrategy;
+  private final ServiceEmitter emitter;
 
   private volatile boolean initialized = false;
 
@@ -77,7 +77,8 @@ public class BrokerServerView implements TimelineServerView
       @Smile ObjectMapper smileMapper,
       @Client HttpClient httpClient,
       ServerInventoryView baseView,
-      TierSelectorStrategy tierSelectorStrategy
+      TierSelectorStrategy tierSelectorStrategy,
+      ServiceEmitter emitter
   )
   {
     this.warehouse = warehouse;
@@ -86,6 +87,7 @@ public class BrokerServerView implements TimelineServerView
     this.httpClient = httpClient;
     this.baseView = baseView;
     this.tierSelectorStrategy = tierSelectorStrategy;
+    this.emitter = emitter;
 
     this.clients = Maps.newConcurrentMap();
     this.selectors = Maps.newHashMap();
@@ -173,7 +175,7 @@ public class BrokerServerView implements TimelineServerView
 
   private DirectDruidClient makeDirectClient(DruidServer server)
   {
-    return new DirectDruidClient(warehouse, queryWatcher, smileMapper, httpClient, server.getHost());
+    return new DirectDruidClient(warehouse, queryWatcher, smileMapper, httpClient, server.getHost(), emitter);
   }
 
   private QueryableDruidServer removeServer(DruidServer server)
@@ -208,7 +210,7 @@ public class BrokerServerView implements TimelineServerView
       if (queryableDruidServer == null) {
         queryableDruidServer = addServer(baseView.getInventoryValue(server.getName()));
       }
-      selector.addServer(queryableDruidServer);
+      selector.addServerAndUpdateSegment(queryableDruidServer, segment);
     }
   }
 
@@ -256,27 +258,11 @@ public class BrokerServerView implements TimelineServerView
 
 
   @Override
-  public TimelineLookup<String, ServerSelector> getTimeline(DataSource dataSource)
+  public VersionedIntervalTimeline<String, ServerSelector> getTimeline(DataSource dataSource)
   {
-    final List<String> tables = dataSource.getNames();
+    String table = Iterables.getOnlyElement(dataSource.getNames());
     synchronized (lock) {
-      if (tables.size() == 1) {
-        return timelines.get(tables.get(0));
-      } else {
-        return new UnionTimeLineLookup<>(
-            Iterables.transform(
-                tables, new Function<String, TimelineLookup<String, ServerSelector>>()
-                {
-
-                  @Override
-                  public TimelineLookup<String, ServerSelector> apply(String input)
-                  {
-                    return timelines.get(input);
-                  }
-                }
-            )
-        );
-      }
+      return timelines.get(table);
     }
   }
 

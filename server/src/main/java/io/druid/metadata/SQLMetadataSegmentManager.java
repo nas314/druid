@@ -1,33 +1,38 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.metadata;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Supplier;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Ordering;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListeningScheduledExecutorService;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.Inject;
 import com.metamx.common.MapUtils;
-import com.metamx.common.concurrent.ScheduledExecutors;
 import com.metamx.common.lifecycle.LifecycleStart;
 import com.metamx.common.lifecycle.LifecycleStop;
-import com.metamx.common.logger.Logger;
+import com.metamx.emitter.EmittingLogger;
 import io.druid.client.DruidDataSource;
 import io.druid.concurrent.Execs;
 import io.druid.guice.ManageLifecycle;
@@ -38,6 +43,7 @@ import io.druid.timeline.partition.PartitionChunk;
 import org.joda.time.DateTime;
 import org.joda.time.Duration;
 import org.joda.time.Interval;
+import org.skife.jdbi.v2.BaseResultSetMapper;
 import org.skife.jdbi.v2.Batch;
 import org.skife.jdbi.v2.FoldController;
 import org.skife.jdbi.v2.Folder3;
@@ -53,10 +59,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -64,7 +71,8 @@ import java.util.concurrent.atomic.AtomicReference;
 @ManageLifecycle
 public class SQLMetadataSegmentManager implements MetadataSegmentManager
 {
-  private static final Logger log = new Logger(SQLMetadataSegmentManager.class);
+  private static final EmittingLogger log = new EmittingLogger(SQLMetadataSegmentManager.class);
+
 
   private final Object lock = new Object();
 
@@ -74,7 +82,8 @@ public class SQLMetadataSegmentManager implements MetadataSegmentManager
   private final AtomicReference<ConcurrentHashMap<String, DruidDataSource>> dataSources;
   private final IDBI dbi;
 
-  private volatile ScheduledExecutorService exec;
+  private volatile ListeningScheduledExecutorService exec = null;
+  private volatile ListenableFuture<?> future = null;
 
   private volatile boolean started = false;
 
@@ -103,23 +112,28 @@ public class SQLMetadataSegmentManager implements MetadataSegmentManager
         return;
       }
 
-      this.exec = Execs.scheduledSingleThreaded("DatabaseSegmentManager-Exec--%d");
+      exec = MoreExecutors.listeningDecorator(Execs.scheduledSingleThreaded("DatabaseSegmentManager-Exec--%d"));
 
       final Duration delay = config.get().getPollDuration().toStandardDuration();
-      ScheduledExecutors.scheduleWithFixedDelay(
-          exec,
-          new Duration(0),
-          delay,
+      future = exec.scheduleWithFixedDelay(
           new Runnable()
           {
             @Override
             public void run()
             {
-              poll();
-            }
-          }
-      );
+              try {
+                poll();
+              }
+              catch (Exception e) {
+                log.makeAlert(e, "uncaught exception in segment manager polling thread").emit();
 
+              }
+            }
+          },
+          0,
+          delay.getMillis(),
+          TimeUnit.MILLISECONDS
+      );
       started = true;
     }
   }
@@ -134,6 +148,8 @@ public class SQLMetadataSegmentManager implements MetadataSegmentManager
 
       started = false;
       dataSources.set(new ConcurrentHashMap<String, DruidDataSource>());
+      future.cancel(false);
+      future = null;
       exec.shutdownNow();
       exec = null;
     }
@@ -413,6 +429,8 @@ public class SQLMetadataSegmentManager implements MetadataSegmentManager
 
       ConcurrentHashMap<String, DruidDataSource> newDataSources = new ConcurrentHashMap<String, DruidDataSource>();
 
+      log.debug("Starting polling of segment table");
+
       List<DataSegment> segments = dbi.withHandle(
           new HandleCallback<List<DataSegment>>()
           {
@@ -485,12 +503,66 @@ public class SQLMetadataSegmentManager implements MetadataSegmentManager
       }
     }
     catch (Exception e) {
-      log.error(e, "Problem polling DB.");
+      log.makeAlert(e, "Problem polling DB.").emit();
     }
   }
 
   private String getSegmentsTable()
   {
     return dbTables.get().getSegmentsTable();
+  }
+
+  @Override
+  public List<Interval> getUnusedSegmentIntervals(
+      final String dataSource,
+      final Interval interval,
+      final int limit
+  )
+  {
+    return dbi.withHandle(
+        new HandleCallback<List<Interval>>()
+        {
+          @Override
+          public List<Interval> withHandle(Handle handle) throws IOException, SQLException
+          {
+            Iterator<Interval> iter = handle
+                .createQuery(
+                    String.format(
+                        "SELECT start, \"end\" FROM %s WHERE dataSource = :dataSource and start >= :start and \"end\" <= :end and used = false ORDER BY start, \"end\"",
+                        getSegmentsTable()
+                    )
+                )
+                .bind("dataSource", dataSource)
+                .bind("start", interval.getStart().toString())
+                .bind("end", interval.getEnd().toString())
+                .map(
+                    new BaseResultSetMapper<Interval>()
+                    {
+                      @Override
+                      protected Interval mapInternal(int index, Map<String, Object> row)
+                      {
+                        return new Interval(
+                            DateTime.parse((String) row.get("start")),
+                            DateTime.parse((String) row.get("end"))
+                        );
+                      }
+                    }
+                )
+                .iterator();
+
+
+            List<Interval> result = Lists.newArrayListWithCapacity(limit);
+            for (int i = 0; i < limit && iter.hasNext(); i++) {
+              try {
+                result.add(iter.next());
+              }
+              catch (Exception e) {
+                throw Throwables.propagate(e);
+              }
+            }
+            return result;
+          }
+        }
+    );
   }
 }

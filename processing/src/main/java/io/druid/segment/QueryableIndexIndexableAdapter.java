@@ -1,24 +1,28 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.segment;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Function;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.metamx.common.ISE;
 import com.metamx.common.guava.CloseQuietly;
@@ -45,7 +49,6 @@ import java.io.Closeable;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 
@@ -57,6 +60,7 @@ public class QueryableIndexIndexableAdapter implements IndexableAdapter
   private final int numRows;
   private final QueryableIndex input;
   private final List<String> availableDimensions;
+  private final Metadata metadata;
 
   public QueryableIndexIndexableAdapter(QueryableIndex input)
   {
@@ -78,6 +82,8 @@ public class QueryableIndexIndexableAdapter implements IndexableAdapter
         log.info("No dictionary on dimension[%s]", dim);
       }
     }
+
+    this.metadata = input.getMetadata();
   }
 
   @Override
@@ -172,7 +178,7 @@ public class QueryableIndexIndexableAdapter implements IndexableAdapter
           final GenericColumn timestamps = input.getColumn(Column.TIME_COLUMN_NAME).getGenericColumn();
           final Object[] metrics;
 
-          final Map<String, DictionaryEncodedColumn> dimensions;
+          final DictionaryEncodedColumn[] dictionaryEncodedColumns;
 
           final int numMetrics = getMetricNames().size();
 
@@ -180,10 +186,19 @@ public class QueryableIndexIndexableAdapter implements IndexableAdapter
           boolean done = false;
 
           {
-            dimensions = Maps.newLinkedHashMap();
-            for (String dim : getDimensionNames()) {
-              dimensions.put(dim, input.getColumn(dim).getDictionaryEncoding());
-            }
+            this.dictionaryEncodedColumns = FluentIterable
+                .from(getDimensionNames())
+                .transform(
+                    new Function<String, DictionaryEncodedColumn>()
+                    {
+                      @Override
+                      public DictionaryEncodedColumn apply(String dimName)
+                      {
+                        return input.getColumn(dimName)
+                                    .getDictionaryEncoding();
+                      }
+                    }
+                ).toArray(DictionaryEncodedColumn.class);
 
             final Indexed<String> availableMetrics = getMetricNames();
             metrics = new Object[availableMetrics.size()];
@@ -215,6 +230,11 @@ public class QueryableIndexIndexableAdapter implements IndexableAdapter
                   CloseQuietly.close((Closeable) metric);
                 }
               }
+              for (Object dimension : dictionaryEncodedColumns) {
+                if (dimension instanceof Closeable) {
+                  CloseQuietly.close((Closeable) dimension);
+                }
+              }
               done = true;
             }
             return hasNext;
@@ -227,10 +247,9 @@ public class QueryableIndexIndexableAdapter implements IndexableAdapter
               throw new NoSuchElementException();
             }
 
-            int[][] dims = new int[dimensions.size()][];
+            final int[][] dims = new int[dictionaryEncodedColumns.length][];
             int dimIndex = 0;
-            for (String dim : dimensions.keySet()) {
-              final DictionaryEncodedColumn dict = dimensions.get(dim);
+            for (final DictionaryEncodedColumn dict : dictionaryEncodedColumns) {
               final IndexedInts dimVals;
               if (dict.hasMultipleValues()) {
                 dimVals = dict.getMultiValueRow(currRow);
@@ -276,18 +295,18 @@ public class QueryableIndexIndexableAdapter implements IndexableAdapter
     };
   }
 
-  @Override
-  public IndexedInts getBitmapIndex(String dimension, String value)
+  @VisibleForTesting
+  IndexedInts getBitmapIndex(String dimension, String value)
   {
     final Column column = input.getColumn(dimension);
 
     if (column == null) {
-      return new EmptyIndexedInts();
+      return EmptyIndexedInts.EMPTY_INDEXED_INTS;
     }
 
     final BitmapIndex bitmaps = column.getBitmapIndex();
     if (bitmaps == null) {
-      return new EmptyIndexedInts();
+      return EmptyIndexedInts.EMPTY_INDEXED_INTS;
     }
 
     return new BitmapCompressedIndexedInts(bitmaps.getBitmap(value));
@@ -315,5 +334,31 @@ public class QueryableIndexIndexableAdapter implements IndexableAdapter
   public ColumnCapabilities getCapabilities(String column)
   {
     return input.getColumn(column).getCapabilities();
+  }
+
+  @Override
+  public IndexedInts getBitmapIndex(String dimension, int dictId)
+  {
+    final Column column = input.getColumn(dimension);
+    if (column == null) {
+      return EmptyIndexedInts.EMPTY_INDEXED_INTS;
+    }
+
+    final BitmapIndex bitmaps = column.getBitmapIndex();
+    if (bitmaps == null) {
+      return EmptyIndexedInts.EMPTY_INDEXED_INTS;
+    }
+
+    if (dictId >= 0) {
+      return new BitmapCompressedIndexedInts(bitmaps.getBitmap(dictId));
+    } else {
+      return EmptyIndexedInts.EMPTY_INDEXED_INTS;
+    }
+  }
+
+  @Override
+  public Metadata getMetadata()
+  {
+    return metadata;
   }
 }

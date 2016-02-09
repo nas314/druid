@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.query.datasourcemetadata;
@@ -35,7 +37,6 @@ import io.druid.query.QueryRunnerTestHelper;
 import io.druid.query.Result;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.CountAggregatorFactory;
-import io.druid.query.timeboundary.TimeBoundaryQueryQueryToolChest;
 import io.druid.segment.IncrementalIndexSegment;
 import io.druid.segment.incremental.IncrementalIndex;
 import io.druid.segment.incremental.OnheapIncrementalIndex;
@@ -142,9 +143,25 @@ public class DataSourceMetadataQueryTest
   @Test
   public void testFilterSegments()
   {
-    List<LogicalSegment> segments = new TimeBoundaryQueryQueryToolChest().filterSegments(
+    List<LogicalSegment> segments = new DataSourceQueryQueryToolChest().filterSegments(
         null,
         Arrays.asList(
+            new LogicalSegment()
+            {
+              @Override
+              public Interval getInterval()
+              {
+                return new Interval("2012-01-01/P1D");
+              }
+            },
+            new LogicalSegment()
+            {
+              @Override
+              public Interval getInterval()
+              {
+                return new Interval("2012-01-01T01/PT1H");
+              }
+            },
             new LogicalSegment()
             {
               @Override
@@ -172,8 +189,8 @@ public class DataSourceMetadataQueryTest
         )
     );
 
-    Assert.assertEquals(segments.size(), 3);
-
+    Assert.assertEquals(segments.size(), 2);
+    // should only have the latest segments. 
     List<LogicalSegment> expected = Arrays.asList(
         new LogicalSegment()
         {
@@ -188,21 +205,13 @@ public class DataSourceMetadataQueryTest
           @Override
           public Interval getInterval()
           {
-            return new Interval("2013-01-01T01/PT1H");
-          }
-        },
-        new LogicalSegment()
-        {
-          @Override
-          public Interval getInterval()
-          {
             return new Interval("2013-01-01T02/PT1H");
           }
         }
     );
 
     for (int i = 0; i < segments.size(); i++) {
-      Assert.assertEquals(segments.get(i).getInterval(), expected.get(i).getInterval());
+      Assert.assertEquals(expected.get(i).getInterval(),segments.get(i).getInterval());
     }
   }
 

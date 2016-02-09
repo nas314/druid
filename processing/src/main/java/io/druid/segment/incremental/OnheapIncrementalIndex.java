@@ -1,32 +1,39 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.segment.incremental;
 
-import com.google.common.collect.BiMap;
-import com.google.common.collect.HashBiMap;
+import com.google.common.base.Supplier;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import com.metamx.common.ISE;
 import io.druid.data.input.InputRow;
 import io.druid.granularity.QueryGranularity;
 import io.druid.query.aggregation.Aggregator;
 import io.druid.query.aggregation.AggregatorFactory;
+import io.druid.query.dimension.DimensionSpec;
+import io.druid.segment.ColumnSelectorFactory;
+import io.druid.segment.DimensionSelector;
+import io.druid.segment.FloatColumnSelector;
+import io.druid.segment.LongColumnSelector;
+import io.druid.segment.ObjectColumnSelector;
 
-import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -39,9 +46,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
 {
   private final ConcurrentHashMap<Integer, Aggregator[]> aggregators = new ConcurrentHashMap<>();
-  private final ConcurrentNavigableMap<TimeAndDims, Integer> facts = new ConcurrentSkipListMap<>();
+  private final ConcurrentNavigableMap<TimeAndDims, Integer> facts;
   private final AtomicInteger indexIncrement = new AtomicInteger(0);
   protected final int maxRowCount;
+  private volatile Map<String, ColumnSelectorFactory> selectors;
 
   private String outOfRowsReason = null;
 
@@ -53,6 +61,7 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
   {
     super(incrementalIndexSchema, deserializeComplexMetrics);
     this.maxRowCount = maxRowCount;
+    this.facts = new ConcurrentSkipListMap<>(dimsComparator());
   }
 
   public OnheapIncrementalIndex(
@@ -105,16 +114,24 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
   }
 
   @Override
-  protected DimDim makeDimDim(String dimension)
+  protected DimDim makeDimDim(String dimension, Object lock)
   {
-    return new OnHeapDimDim();
+    return new OnHeapDimDim(lock);
   }
 
   @Override
   protected Aggregator[] initAggs(
-      AggregatorFactory[] metrics, ThreadLocal<InputRow> in, boolean deserializeComplexMetrics
+      AggregatorFactory[] metrics, Supplier<InputRow> rowSupplier, boolean deserializeComplexMetrics
   )
   {
+    selectors = Maps.newHashMap();
+    for (AggregatorFactory agg : metrics) {
+      selectors.put(
+          agg.getName(),
+          new ObjectCachingColumnSelectorFactory(makeColumnSelectorFactory(agg, rowSupplier, deserializeComplexMetrics))
+      );
+    }
+
     return new Aggregator[metrics.length];
   }
 
@@ -125,7 +142,8 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
       InputRow row,
       AtomicInteger numEntries,
       TimeAndDims key,
-      ThreadLocal<InputRow> in
+      ThreadLocal<InputRow> rowContainer,
+      Supplier<InputRow> rowSupplier
   ) throws IndexSizeExceededException
   {
     final Integer priorIndex = facts.get(key);
@@ -136,10 +154,11 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
       aggs = concurrentGet(priorIndex);
     } else {
       aggs = new Aggregator[metrics.length];
+
       for (int i = 0; i < metrics.length; i++) {
         final AggregatorFactory agg = metrics[i];
         aggs[i] = agg.factorize(
-            makeColumnSelectorFactory(agg, in, deserializeComplexMetrics)
+            selectors.get(agg.getName())
         );
       }
       final Integer rowIndex = indexIncrement.getAndIncrement();
@@ -148,7 +167,7 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
 
       // Last ditch sanity checks
       if (numEntries.get() >= maxRowCount && !facts.containsKey(key)) {
-        throw new IndexSizeExceededException("Maximum number of rows reached");
+        throw new IndexSizeExceededException("Maximum number of rows [%d] reached", maxRowCount);
       }
       final Integer prev = facts.putIfAbsent(key, rowIndex);
       if (null == prev) {
@@ -162,7 +181,7 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
       }
     }
 
-    in.set(row);
+    rowContainer.set(row);
 
     for (Aggregator agg : aggs) {
       synchronized (agg) {
@@ -170,7 +189,7 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
       }
     }
 
-    in.set(null);
+    rowContainer.set(null);
 
 
     return numEntries.get();
@@ -238,97 +257,200 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
     return concurrentGet(rowOffset)[aggOffset].get();
   }
 
-  private static class OnHeapDimDim implements DimDim
+  /**
+   * Clear out maps to allow GC
+   * NOTE: This is NOT thread-safe with add... so make sure all the adding is DONE before closing
+   */
+  @Override
+  public void close()
   {
-    private final Map<String, Integer> falseIds;
-    private final Map<Integer, String> falseIdsReverse;
-    private volatile String[] sortedVals = null;
-    final ConcurrentMap<String, String> poorMansInterning = Maps.newConcurrentMap();
-
-    public OnHeapDimDim()
-    {
-      BiMap<String, Integer> biMap = Maps.synchronizedBiMap(HashBiMap.<String, Integer>create());
-      falseIds = biMap;
-      falseIdsReverse = biMap.inverse();
+    super.close();
+    aggregators.clear();
+    facts.clear();
+    if (selectors != null) {
+      selectors.clear();
     }
+  }
 
-    /**
-     * Returns the interned String value to allow fast comparisons using `==` instead of `.equals()`
-     *
-     * @see io.druid.segment.incremental.IncrementalIndexStorageAdapter.EntryHolderValueMatcherFactory#makeValueMatcher(String, String)
-     */
-    public String get(String str)
+  static class OnHeapDimDim implements DimDim
+  {
+    private final Map<String, Integer> valueToId = Maps.newHashMap();
+
+    private final List<String> idToValue = Lists.newArrayList();
+    private final Object lock;
+
+    public OnHeapDimDim(Object lock)
     {
-      String prev = poorMansInterning.putIfAbsent(str, str);
-      return prev != null ? prev : str;
+      this.lock = lock;
     }
 
     public int getId(String value)
     {
-      if (value == null) {
-        value = "";
+      synchronized (lock) {
+        final Integer id = valueToId.get(value);
+        return id == null ? -1 : id;
       }
-      final Integer id = falseIds.get(value);
-      return id == null ? -1 : id;
     }
 
     public String getValue(int id)
     {
-      return falseIdsReverse.get(id);
+      synchronized (lock) {
+        return idToValue.get(id);
+      }
     }
 
     public boolean contains(String value)
     {
-      return falseIds.containsKey(value);
+      synchronized (lock) {
+        return valueToId.containsKey(value);
+      }
     }
 
     public int size()
     {
-      return falseIds.size();
+      synchronized (lock) {
+        return valueToId.size();
+      }
     }
 
-    public synchronized int add(String value)
+    public int add(String value)
     {
-      int id = falseIds.size();
-      falseIds.put(value, id);
-      return id;
+      synchronized (lock) {
+        Integer prev = valueToId.get(value);
+        if (prev != null) {
+          return prev;
+        }
+        final int index = size();
+        valueToId.put(value, index);
+        idToValue.add(value);
+        return index;
+      }
     }
 
-    public int getSortedId(String value)
+    public OnHeapDimLookup sort()
     {
-      assertSorted();
-      return Arrays.binarySearch(sortedVals, value);
+      synchronized (lock) {
+        return new OnHeapDimLookup(idToValue, size());
+      }
+    }
+  }
+
+  static class OnHeapDimLookup implements SortedDimLookup
+  {
+    private final String[] sortedVals;
+    private final int[] idToIndex;
+    private final int[] indexToId;
+
+    public OnHeapDimLookup(List<String> idToValue, int length)
+    {
+      Map<String, Integer> sortedMap = Maps.newTreeMap();
+      for (int id = 0; id < length; id++) {
+        sortedMap.put(idToValue.get(id), id);
+      }
+      this.sortedVals = sortedMap.keySet().toArray(new String[length]);
+      this.idToIndex = new int[length];
+      this.indexToId = new int[length];
+      int index = 0;
+      for (Integer id : sortedMap.values()) {
+        idToIndex[id] = index;
+        indexToId[index] = id;
+        index++;
+      }
     }
 
-    public String getSortedValue(int index)
+    @Override
+    public int size()
     {
-      assertSorted();
+      return sortedVals.length;
+    }
+
+    @Override
+    public int indexToId(int index)
+    {
+      return indexToId[index];
+    }
+
+    @Override
+    public String getValue(int index)
+    {
       return sortedVals[index];
     }
 
-    public void sort()
+    @Override
+    public int idToIndex(int id)
     {
-      if (sortedVals == null) {
-        sortedVals = new String[falseIds.size()];
-
-        int index = 0;
-        for (String value : falseIds.keySet()) {
-          sortedVals[index++] = value;
-        }
-        Arrays.sort(sortedVals);
-      }
-    }
-
-    private void assertSorted()
-    {
-      if (sortedVals == null) {
-        throw new ISE("Call sort() before calling the getSorted* methods.");
-      }
-    }
-
-    public boolean compareCannonicalValues(String s1, String s2)
-    {
-      return s1 == s2;
+      return idToIndex[id];
     }
   }
+
+  // Caches references to selector objects for each column instead of creating a new object each time in order to save heap space.
+  // In general the selectorFactory need not to thread-safe.
+  // here its made thread safe to support the special case of groupBy where the multiple threads can add concurrently to the IncrementalIndex.
+  static class ObjectCachingColumnSelectorFactory implements ColumnSelectorFactory
+  {
+    private final ConcurrentMap<String, LongColumnSelector> longColumnSelectorMap = Maps.newConcurrentMap();
+    private final ConcurrentMap<String, FloatColumnSelector> floatColumnSelectorMap = Maps.newConcurrentMap();
+    private final ConcurrentMap<String, ObjectColumnSelector> objectColumnSelectorMap = Maps.newConcurrentMap();
+    private final ColumnSelectorFactory delegate;
+
+    public ObjectCachingColumnSelectorFactory(ColumnSelectorFactory delegate)
+    {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public DimensionSelector makeDimensionSelector(DimensionSpec dimensionSpec)
+    {
+      return delegate.makeDimensionSelector(dimensionSpec);
+    }
+
+    @Override
+    public FloatColumnSelector makeFloatColumnSelector(String columnName)
+    {
+      FloatColumnSelector existing = floatColumnSelectorMap.get(columnName);
+      if (existing != null) {
+        return existing;
+      } else {
+        FloatColumnSelector newSelector = delegate.makeFloatColumnSelector(columnName);
+        FloatColumnSelector prev = floatColumnSelectorMap.putIfAbsent(
+            columnName,
+            newSelector
+        );
+        return prev != null ? prev : newSelector;
+      }
+    }
+
+    @Override
+    public LongColumnSelector makeLongColumnSelector(String columnName)
+    {
+      LongColumnSelector existing = longColumnSelectorMap.get(columnName);
+      if (existing != null) {
+        return existing;
+      } else {
+        LongColumnSelector newSelector = delegate.makeLongColumnSelector(columnName);
+        LongColumnSelector prev = longColumnSelectorMap.putIfAbsent(
+            columnName,
+            newSelector
+        );
+        return prev != null ? prev : newSelector;
+      }
+    }
+
+    @Override
+    public ObjectColumnSelector makeObjectColumnSelector(String columnName)
+    {
+      ObjectColumnSelector existing = objectColumnSelectorMap.get(columnName);
+      if (existing != null) {
+        return existing;
+      } else {
+        ObjectColumnSelector newSelector = delegate.makeObjectColumnSelector(columnName);
+        ObjectColumnSelector prev = objectColumnSelectorMap.putIfAbsent(
+            columnName,
+            newSelector
+        );
+        return prev != null ? prev : newSelector;
+      }
+    }
+  }
+
 }

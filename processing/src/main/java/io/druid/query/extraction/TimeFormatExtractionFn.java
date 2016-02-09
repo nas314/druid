@@ -1,18 +1,18 @@
 /*
  * Licensed to Metamarkets Group Inc. (Metamarkets) under one
- * or more contributor license agreements.  See the NOTICE file
+ * or more contributor license agreements. See the NOTICE file
  * distributed with this work for additional information
- * regarding copyright ownership.  Metamarkets licenses this file
+ * regarding copyright ownership. Metamarkets licenses this file
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * with the License. You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
+ * KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations
  * under the License.
  */
@@ -32,8 +32,6 @@ import java.util.Locale;
 
 public class TimeFormatExtractionFn implements ExtractionFn
 {
-  private static final byte CACHE_TYPE_ID = 0x5;
-
   private final DateTimeZone tz;
   private final String pattern;
   private final Locale locale;
@@ -82,7 +80,7 @@ public class TimeFormatExtractionFn implements ExtractionFn
   {
     byte[] exprBytes = StringUtils.toUtf8(pattern + "\u0001" + tz.getID() + "\u0001" + locale.toLanguageTag());
     return ByteBuffer.allocate(1 + exprBytes.length)
-                     .put(CACHE_TYPE_ID)
+                     .put(ExtractionCacheHelper.CACHE_TYPE_ID_TIME_FORMAT)
                      .put(exprBytes)
                      .array();
   }
@@ -102,13 +100,19 @@ public class TimeFormatExtractionFn implements ExtractionFn
   @Override
   public String apply(String value)
   {
-    return apply((Object)value);
+    return apply((Object) value);
   }
 
   @Override
   public boolean preservesOrdering()
   {
     return false;
+  }
+
+  @Override
+  public ExtractionType getExtractionType()
+  {
+    return ExtractionType.MANY_TO_ONE;
   }
 
   @Override

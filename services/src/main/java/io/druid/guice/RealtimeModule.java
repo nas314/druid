@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.guice;
@@ -23,6 +25,8 @@ import com.google.inject.Module;
 import com.google.inject.TypeLiteral;
 import com.google.inject.multibindings.MapBinder;
 import io.druid.cli.QueryJettyServerInitializer;
+import io.druid.client.cache.CacheConfig;
+import io.druid.client.coordinator.CoordinatorClient;
 import io.druid.metadata.MetadataSegmentPublisher;
 import io.druid.query.QuerySegmentWalker;
 import io.druid.segment.realtime.FireDepartment;
@@ -33,9 +37,11 @@ import io.druid.segment.realtime.firehose.ChatHandlerProvider;
 import io.druid.segment.realtime.firehose.ChatHandlerResource;
 import io.druid.segment.realtime.firehose.NoopChatHandlerProvider;
 import io.druid.segment.realtime.firehose.ServiceAnnouncingChatHandlerProvider;
+import io.druid.segment.realtime.plumber.CoordinatorBasedSegmentHandoffNotifierConfig;
+import io.druid.segment.realtime.plumber.CoordinatorBasedSegmentHandoffNotifierFactory;
+import io.druid.segment.realtime.plumber.SegmentHandoffNotifierFactory;
 import io.druid.server.QueryResource;
 import io.druid.server.initialization.jetty.JettyServerInitializer;
-
 import org.eclipse.jetty.server.Server;
 
 import java.util.List;
@@ -44,6 +50,7 @@ import java.util.List;
  */
 public class RealtimeModule implements Module
 {
+
   @Override
   public void configure(Binder binder)
   {
@@ -65,7 +72,7 @@ public class RealtimeModule implements Module
         binder,
         "druid.realtime.chathandler.type",
         Key.get(ChatHandlerProvider.class),
-        Key.get(NoopChatHandlerProvider.class)
+        Key.get(ServiceAnnouncingChatHandlerProvider.class)
     );
     final MapBinder<String, ChatHandlerProvider> handlerProviderBinder = PolyBind.optionBinder(
         binder, Key.get(ChatHandlerProvider.class)
@@ -76,9 +83,22 @@ public class RealtimeModule implements Module
                          .to(NoopChatHandlerProvider.class).in(LazySingleton.class);
 
     JsonConfigProvider.bind(binder, "druid.realtime", RealtimeManagerConfig.class);
-    binder.bind(new TypeLiteral<List<FireDepartment>>(){})
+    binder.bind(
+        new TypeLiteral<List<FireDepartment>>()
+        {
+        }
+    )
           .toProvider(FireDepartmentsProvider.class)
           .in(LazySingleton.class);
+
+    JsonConfigProvider.bind(binder, "druid.segment.handoff", CoordinatorBasedSegmentHandoffNotifierConfig.class);
+    binder.bind(SegmentHandoffNotifierFactory.class)
+          .to(CoordinatorBasedSegmentHandoffNotifierFactory.class)
+          .in(LazySingleton.class);
+    binder.bind(CoordinatorClient.class).in(LazySingleton.class);
+
+    JsonConfigProvider.bind(binder, "druid.realtime.cache", CacheConfig.class);
+    binder.install(new CacheModule());
 
     binder.bind(QuerySegmentWalker.class).to(RealtimeManager.class).in(ManageLifecycle.class);
     binder.bind(NodeTypeConfig.class).toInstance(new NodeTypeConfig("realtime"));

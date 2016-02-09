@@ -15,7 +15,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -78,7 +78,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -179,7 +179,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -266,7 +266,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -301,7 +301,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -373,7 +373,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -488,7 +488,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -609,7 +609,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -699,7 +699,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -774,7 +774,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -838,7 +838,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -910,7 +910,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -988,7 +988,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -1014,7 +1014,7 @@
             "context": {
                 "useCache": "true",
                 "populateCache": "true",
-                "timeout": 60000
+                "timeout": 360000
             }
         },
         "expectedResults": [
@@ -1045,18 +1045,22 @@
                 "columns": {
                     "country_name": {
                         "type": "STRING",
+                        "hasMultipleValues": false,
                         "size": 41922148,
                         "cardinality": 208,
                         "errorMessage": null
                     },
                     "language": {
                         "type": "STRING",
+                        "hasMultipleValues": false,
                         "size": 8924222,
                         "cardinality": 36,
                         "errorMessage": null
                     }
                 },
-                "size": 902457341
+                "size": 902457341,
+                "numRows": 4462111,
+                "aggregators": null
             }
         ]
     }

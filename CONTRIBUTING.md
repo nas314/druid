@@ -2,18 +2,21 @@
 
 When submitting a pull request (PR), please use the following guidelines:
 
+- Make sure your code respects existing formatting conventions. In general, follow
+  the same coding style as the code that you are modifying. If you are using
+  IntelliJ, you can import our code style settings jar:
+  [intellij_formatting.jar](https://github.com/druid-io/druid/raw/master/intellij_formatting.jar).
+- Do add/update documentation appropriately for the change you are making.
+- If you are introducing a new feature you may want to first submit your idea
+  for feedback to the [mailing list](mailto:druid-development@googlegroups.com).
+  Non-trivial features should include unit tests covering the new functionality.
+- Bugfixes should include a unit test or integration test reproducing the issue.
+- Do not use author tags/information in the code.
+- Always include license header on each java file your create. See [this example](https://github.com/druid-io/druid/blob/master/common/src/main/java/io/druid/metadata/PasswordProvider.java)
 - Try to keep pull requests short and submit separate ones for unrelated
   features, but feel free to combine simple bugfixes/tests into one pull request.
 - Keep the number of commits small and combine commits for related changes.
   Each commit should compile on its own and ideally pass tests.
-- If you are introducing a new feature you may want to first submit your idea
-  of feedback in the [mailing list](mailto:druid-development@googlegroups.com).
-- Bugfixes should include a unit-test or integration test reproducing the issue.
-- Non-trivial features should include unit-test covering the new functionality.
-- Make sure your code respects existing formatting conventions. We don't have a
-  formal style guide yet, but use your own judgement. If you are using
-  IntelliJ, you can use import our code style settings jar
-  [intellij_formatting.jar](https://github.com/druid-io/druid/raw/master/intellij_formatting.jar).
 - Keep formatting changes in separate commits to make code reviews easier and
   distinguish them from actual code changes.
 
@@ -79,7 +82,9 @@ When submitting a pull request (PR), please use the following guidelines:
 
   Go to your Druid fork main page
 
+  ```
   https://github.com/<username>/druid
+  ```
 
   If you recently pushed your changes GitHub will automatically pop up a
   `Compare & pull request` button for any branches you recently pushed to. If you
@@ -91,7 +96,7 @@ When submitting a pull request (PR), please use the following guidelines:
 
 1. Addressing code review comments
 
-  Repeat steps 4. through 6. to address any code review comments and
+  Repeat steps 5. through 7. to address any code review comments and
   rebase your changes if necessary.
 
   Push your updated changes to update the pull request
@@ -112,9 +117,9 @@ When submitting a pull request (PR), please use the following guidelines:
 
 # FAQ
 
-### Help! I merged changes from upstream and cannot figure out how to resolve conflits when rebasing!
+### Help! I merged changes from upstream and cannot figure out how to resolve conflicts when rebasing!
 
-Never fear, if you occasionally merged upgstream/master, here is another way to squash your changes into a single commit
+Never fear! If you occasionally merged upstream/master, here is another way to squash your changes into a single commit:
 
 1. First, rename your existing branch to something else, e.g. `feature-xxx-unclean`
 
@@ -135,7 +140,7 @@ Never fear, if you occasionally merged upgstream/master, here is another way to 
   git commit
   ```
 
-1. You can now submit this new branch and create or replace your existing pull request
+1. You can now submit this new branch and create or replace your existing pull request.
 
   ```
   git push origin [--force] feature-xxx:feature-xxx

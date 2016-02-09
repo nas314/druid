@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.segment.data;
@@ -36,7 +38,7 @@ public class GenericIndexedTest
   @Test(expected = UnsupportedOperationException.class)
   public void testNotSortedNoIndexOf() throws Exception
   {
-    GenericIndexed.fromArray(new String[]{"a", "c", "b"}, GenericIndexed.stringStrategy).indexOf("a");
+    GenericIndexed.fromArray(new String[]{"a", "c", "b"}, GenericIndexed.STRING_STRATEGY).indexOf("a");
   }
 
   @Test(expected = UnsupportedOperationException.class)
@@ -44,7 +46,7 @@ public class GenericIndexedTest
   {
     serializeAndDeserialize(
         GenericIndexed.fromArray(
-            new String[]{"a", "c", "b"}, GenericIndexed.stringStrategy
+            new String[]{"a", "c", "b"}, GenericIndexed.STRING_STRATEGY
         )
     ).indexOf("a");
   }
@@ -53,21 +55,9 @@ public class GenericIndexedTest
   public void testSanity() throws Exception
   {
     final String[] strings = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"};
-    Indexed<String> indexed = GenericIndexed.fromArray(strings, GenericIndexed.stringStrategy);
+    Indexed<String> indexed = GenericIndexed.fromArray(strings, GenericIndexed.STRING_STRATEGY);
 
-    Assert.assertEquals(strings.length, indexed.size());
-    for (int i = 0; i < strings.length; i++) {
-      Assert.assertEquals(strings[i], indexed.get(i));
-    }
-
-    HashMap<String, Integer> mixedUp = Maps.newHashMap();
-    for (int i = 0; i < strings.length; i++) {
-      mixedUp.put(strings[i], i);
-    }
-
-    for (Map.Entry<String, Integer> entry : mixedUp.entrySet()) {
-      Assert.assertEquals(entry.getValue().intValue(), indexed.indexOf(entry.getKey()));
-    }
+    checkBasicAPIs(strings, indexed, true);
 
     Assert.assertEquals(-13, indexed.indexOf("q"));
     Assert.assertEquals(-9, indexed.indexOf("howdydo"));
@@ -81,27 +71,54 @@ public class GenericIndexedTest
 
     GenericIndexed<String> deserialized = serializeAndDeserialize(
         GenericIndexed.fromArray(
-            strings, GenericIndexed.stringStrategy
+            strings, GenericIndexed.STRING_STRATEGY
         )
     );
 
-    Assert.assertEquals(strings.length, deserialized.size());
-    for (int i = 0; i < strings.length; i++) {
-      Assert.assertEquals(strings[i], deserialized.get(i));
-    }
-
-    HashMap<String, Integer> mixedUp = Maps.newHashMap();
-    for (int i = 0; i < strings.length; i++) {
-      mixedUp.put(strings[i], i);
-    }
-
-    for (Map.Entry<String, Integer> entry : mixedUp.entrySet()) {
-      Assert.assertEquals(entry.getValue().intValue(), deserialized.indexOf(entry.getKey()));
-    }
+    checkBasicAPIs(strings, deserialized, true);
 
     Assert.assertEquals(-13, deserialized.indexOf("q"));
     Assert.assertEquals(-9, deserialized.indexOf("howdydo"));
     Assert.assertEquals(-1, deserialized.indexOf("1111"));
+  }
+
+  @Test
+  public void testNotSortedSerialization() throws Exception
+  {
+    final String[] strings = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "k", "j", "l"};
+
+    GenericIndexed<String> deserialized = serializeAndDeserialize(
+        GenericIndexed.fromArray(
+            strings, GenericIndexed.STRING_STRATEGY
+        )
+    );
+    checkBasicAPIs(strings, deserialized, false);
+  }
+
+  private void checkBasicAPIs(String[] strings, Indexed<String> index, boolean allowReverseLookup)
+  {
+    Assert.assertEquals(strings.length, index.size());
+    for (int i = 0; i < strings.length; i++) {
+      Assert.assertEquals(strings[i], index.get(i));
+    }
+
+    if (allowReverseLookup) {
+      HashMap<String, Integer> mixedUp = Maps.newHashMap();
+      for (int i = 0; i < strings.length; i++) {
+        mixedUp.put(strings[i], i);
+      }
+      for (Map.Entry<String, Integer> entry : mixedUp.entrySet()) {
+        Assert.assertEquals(entry.getValue().intValue(), index.indexOf(entry.getKey()));
+      }
+    } else {
+      try {
+        index.indexOf("xxx");
+        Assert.fail("should throw exception");
+      }
+      catch (UnsupportedOperationException e) {
+        // not supported
+      }
+    }
   }
 
   private GenericIndexed<String> serializeAndDeserialize(GenericIndexed<String> indexed) throws IOException
@@ -114,7 +131,7 @@ public class GenericIndexedTest
     final ByteBuffer byteBuffer = ByteBuffer.wrap(baos.toByteArray());
     Assert.assertEquals(indexed.getSerializedSize(), byteBuffer.remaining());
     GenericIndexed<String> deserialized = GenericIndexed.read(
-        byteBuffer, GenericIndexed.stringStrategy
+        byteBuffer, GenericIndexed.STRING_STRATEGY
     );
     Assert.assertEquals(0, byteBuffer.remaining());
     return deserialized;

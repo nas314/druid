@@ -1,36 +1,46 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.query;
 
+import com.google.common.base.Function;
+import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import io.druid.granularity.QueryGranularity;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.PostAggregator;
+import io.druid.query.datasourcemetadata.DataSourceMetadataQuery;
+import io.druid.query.dimension.DefaultDimensionSpec;
+import io.druid.query.dimension.DimensionSpec;
 import io.druid.query.filter.AndDimFilter;
 import io.druid.query.filter.DimFilter;
 import io.druid.query.filter.NoopDimFilter;
 import io.druid.query.filter.NotDimFilter;
 import io.druid.query.filter.OrDimFilter;
 import io.druid.query.filter.SelectorDimFilter;
-import io.druid.query.datasourcemetadata.DataSourceMetadataQuery;
 import io.druid.query.metadata.metadata.ColumnIncluderator;
 import io.druid.query.metadata.metadata.SegmentMetadataQuery;
 import io.druid.query.search.SearchResultValue;
+import io.druid.query.search.search.ContainsSearchQuerySpec;
+import io.druid.query.search.search.FragmentSearchQuerySpec;
 import io.druid.query.search.search.InsensitiveContainsSearchQuerySpec;
 import io.druid.query.search.search.SearchQuery;
 import io.druid.query.search.search.SearchQuerySpec;
@@ -44,6 +54,9 @@ import io.druid.query.timeseries.TimeseriesQuery;
 import org.joda.time.DateTime;
 import org.joda.time.Interval;
 
+import javax.annotation.Nullable;
+import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
@@ -51,6 +64,16 @@ import java.util.Map;
  */
 public class Druids
 {
+  public static final Function<String, DimensionSpec> DIMENSION_IDENTITY = new Function<String, DimensionSpec>()
+  {
+    @Nullable
+    @Override
+    public DimensionSpec apply(String input)
+    {
+      return new DefaultDimensionSpec(input, input);
+    }
+  };
+
   private Druids()
   {
     throw new AssertionError();
@@ -58,9 +81,9 @@ public class Druids
 
   /**
    * A Builder for AndDimFilter.
-   *
+   * <p/>
    * Required: fields() must be called before build()
-   * 
+   * <p/>
    * Usage example:
    * <pre><code>
    *   AndDimFilter andDimFilter = Druids.newAndDimFilterBuilder()
@@ -104,9 +127,9 @@ public class Druids
 
   /**
    * A Builder for OrDimFilter.
-   * 
+   * <p/>
    * Required: fields() must be called before build()
-   * 
+   * <p/>
    * Usage example:
    * <pre><code>
    *   OrDimFilter orDimFilter = Druids.newOrDimFilterBuilder()
@@ -159,9 +182,9 @@ public class Druids
 
   /**
    * A Builder for NotDimFilter.
-   * 
+   * <p/>
    * Required: field() must be called before build()
-   * 
+   * <p/>
    * Usage example:
    * <pre><code>
    *   NotDimFilter notDimFilter = Druids.newNotDimFilterBuilder()
@@ -205,9 +228,9 @@ public class Druids
 
   /**
    * A Builder for SelectorDimFilter.
-   * 
+   * <p/>
    * Required: dimension() and value() must be called before build()
-   * 
+   * <p/>
    * Usage example:
    * <pre><code>
    *   Selector selDimFilter = Druids.newSelectorDimFilterBuilder()
@@ -284,10 +307,10 @@ public class Druids
 
   /**
    * A Builder for TimeseriesQuery.
-   * 
+   * <p/>
    * Required: dataSource(), intervals(), and aggregators() must be called before build()
    * Optional: filters(), granularity(), postAggregators(), and context() can be called before build()
-   * 
+   * <p/>
    * Usage example:
    * <pre><code>
    *   TimeseriesQuery query = Druids.newTimeseriesQueryBuilder()
@@ -309,6 +332,8 @@ public class Druids
     private List<PostAggregator> postAggregatorSpecs;
     private Map<String, Object> context;
 
+    private boolean descending;
+
     private TimeseriesQueryBuilder()
     {
       dataSource = null;
@@ -325,6 +350,7 @@ public class Druids
       return new TimeseriesQuery(
           dataSource,
           querySegmentSpec,
+          descending,
           dimFilter,
           granularity,
           aggregatorSpecs,
@@ -339,6 +365,7 @@ public class Druids
           .dataSource(query.getDataSource())
           .intervals(query.getIntervals())
           .filters(query.getDimensionsFilter())
+          .descending(query.isDescending())
           .granularity(query.getGranularity())
           .aggregators(query.getAggregatorSpecs())
           .postAggregators(query.getPostAggregatorSpecs())
@@ -351,6 +378,7 @@ public class Druids
           .dataSource(builder.dataSource)
           .intervals(builder.querySegmentSpec)
           .filters(builder.dimFilter)
+          .descending(builder.descending)
           .granularity(builder.granularity)
           .aggregators(builder.aggregatorSpecs)
           .postAggregators(builder.postAggregatorSpecs)
@@ -370,6 +398,11 @@ public class Druids
     public DimFilter getDimFilter()
     {
       return dimFilter;
+    }
+
+    public boolean isDescending()
+    {
+      return descending;
     }
 
     public QueryGranularity getGranularity()
@@ -444,6 +477,12 @@ public class Druids
       return this;
     }
 
+    public TimeseriesQueryBuilder descending(boolean d)
+    {
+      descending = d;
+      return this;
+    }
+
     public TimeseriesQueryBuilder granularity(String g)
     {
       granularity = QueryGranularity.fromString(g);
@@ -482,11 +521,11 @@ public class Druids
 
   /**
    * A Builder for SearchQuery.
-   * 
+   * <p/>
    * Required: dataSource(), intervals(), dimensions() and query() must be called before build()
-   * 
+   * <p/>
    * Optional: filters(), granularity(), and context() can be called before build()
-   * 
+   * <p/>
    * Usage example:
    * <pre><code>
    *   SearchQuery query = Druids.newSearchQueryBuilder()
@@ -506,7 +545,7 @@ public class Druids
     private QueryGranularity granularity;
     private int limit;
     private QuerySegmentSpec querySegmentSpec;
-    private List<String> dimensions;
+    private List<DimensionSpec> dimensions;
     private SearchQuerySpec querySpec;
     private Map<String, Object> context;
 
@@ -635,11 +674,23 @@ public class Druids
 
     public SearchQueryBuilder dimensions(String d)
     {
+      dimensions = ImmutableList.of(DIMENSION_IDENTITY.apply(d));
+      return this;
+    }
+
+    public SearchQueryBuilder dimensions(Iterable<String> d)
+    {
+      dimensions = ImmutableList.copyOf(Iterables.transform(d, DIMENSION_IDENTITY));
+      return this;
+    }
+
+    public SearchQueryBuilder dimensions(DimensionSpec d)
+    {
       dimensions = Lists.newArrayList(d);
       return this;
     }
 
-    public SearchQueryBuilder dimensions(List<String> d)
+    public SearchQueryBuilder dimensions(List<DimensionSpec> d)
     {
       dimensions = d;
       return this;
@@ -653,13 +704,41 @@ public class Druids
 
     public SearchQueryBuilder query(String q)
     {
+      Preconditions.checkNotNull(q, "no value");
       querySpec = new InsensitiveContainsSearchQuerySpec(q);
       return this;
     }
 
     public SearchQueryBuilder query(Map<String, Object> q)
     {
-      querySpec = new InsensitiveContainsSearchQuerySpec((String) q.get("value"));
+      String value = Preconditions.checkNotNull(q.get("value"), "no value").toString();
+      querySpec = new InsensitiveContainsSearchQuerySpec(value);
+      return this;
+    }
+
+    public SearchQueryBuilder query(String q, boolean caseSensitive)
+    {
+      Preconditions.checkNotNull(q, "no value");
+      querySpec = new ContainsSearchQuerySpec(q, caseSensitive);
+      return this;
+    }
+
+    public SearchQueryBuilder query(Map<String, Object> q, boolean caseSensitive)
+    {
+      String value = Preconditions.checkNotNull(q.get("value"), "no value").toString();
+      querySpec = new ContainsSearchQuerySpec(value, caseSensitive);
+      return this;
+    }
+
+    public SearchQueryBuilder fragments(List<String> q)
+    {
+      return fragments(q, false);
+    }
+
+    public SearchQueryBuilder fragments(List<String> q, boolean caseSensitive)
+    {
+      Preconditions.checkNotNull(q, "no value");
+      querySpec = new FragmentSearchQuerySpec(q, caseSensitive);
       return this;
     }
 
@@ -677,9 +756,9 @@ public class Druids
 
   /**
    * A Builder for TimeBoundaryQuery.
-   * 
+   * <p/>
    * Required: dataSource() must be called before build()
-   * 
+   * <p/>
    * Usage example:
    * <pre><code>
    *   TimeBoundaryQuery query = new MaxTimeQueryBuilder()
@@ -773,9 +852,9 @@ public class Druids
 
   /**
    * A Builder for Result.
-   * 
+   * <p/>
    * Required: timestamp() and value() must be called before build()
-   * 
+   * <p/>
    * Usage example:
    * <pre><code>
    *   Result&lt;T&gt; result = Druids.newResultBuilder()
@@ -839,9 +918,9 @@ public class Druids
 
   /**
    * A Builder for SegmentMetadataQuery.
-   * 
+   * <p/>
    * Required: dataSource(), intervals() must be called before build()
-   * 
+   * <p/>
    * Usage example:
    * <pre><code>
    *   SegmentMetadataQuery query = new SegmentMetadataQueryBuilder()
@@ -857,7 +936,9 @@ public class Druids
     private DataSource dataSource;
     private QuerySegmentSpec querySegmentSpec;
     private ColumnIncluderator toInclude;
+    private EnumSet<SegmentMetadataQuery.AnalysisType> analysisTypes;
     private Boolean merge;
+    private Boolean lenientAggregatorMerge;
     private Map<String, Object> context;
 
     public SegmentMetadataQueryBuilder()
@@ -865,8 +946,10 @@ public class Druids
       dataSource = null;
       querySegmentSpec = null;
       toInclude = null;
+      analysisTypes = null;
       merge = null;
       context = null;
+      lenientAggregatorMerge = null;
     }
 
     public SegmentMetadataQuery build()
@@ -876,17 +959,26 @@ public class Druids
           querySegmentSpec,
           toInclude,
           merge,
-          context
+          context,
+          analysisTypes,
+          false,
+          lenientAggregatorMerge
       );
     }
 
     public SegmentMetadataQueryBuilder copy(SegmentMetadataQueryBuilder builder)
     {
+      final SegmentMetadataQuery.AnalysisType[] analysisTypesArray =
+          analysisTypes != null
+          ? analysisTypes.toArray(new SegmentMetadataQuery.AnalysisType[analysisTypes.size()])
+          : null;
       return new SegmentMetadataQueryBuilder()
           .dataSource(builder.dataSource)
           .intervals(builder.querySegmentSpec)
           .toInclude(toInclude)
+          .analysisTypes(analysisTypesArray)
           .merge(merge)
+          .lenientAggregatorMerge(lenientAggregatorMerge)
           .context(builder.context);
     }
 
@@ -926,10 +1018,27 @@ public class Druids
       return this;
     }
 
+    public SegmentMetadataQueryBuilder analysisTypes(SegmentMetadataQuery.AnalysisType... analysisTypes)
+    {
+      if (analysisTypes == null) {
+        this.analysisTypes = null;
+      } else {
+        this.analysisTypes = analysisTypes.length == 0
+                             ? EnumSet.noneOf(SegmentMetadataQuery.AnalysisType.class)
+                             : EnumSet.copyOf(Arrays.asList(analysisTypes));
+      }
+      return this;
+    }
 
     public SegmentMetadataQueryBuilder merge(boolean merge)
     {
       this.merge = merge;
+      return this;
+    }
+
+    public SegmentMetadataQueryBuilder lenientAggregatorMerge(boolean lenientAggregatorMerge)
+    {
+      this.lenientAggregatorMerge = lenientAggregatorMerge;
       return this;
     }
 
@@ -947,9 +1056,9 @@ public class Druids
 
   /**
    * A Builder for SelectQuery.
-   * 
+   * <p/>
    * Required: dataSource(), intervals() must be called before build()
-   * 
+   * <p/>
    * Usage example:
    * <pre><code>
    *   SelectQuery query = new SelectQueryBuilder()
@@ -964,6 +1073,7 @@ public class Druids
   {
     private DataSource dataSource;
     private QuerySegmentSpec querySegmentSpec;
+    private boolean descending;
     private Map<String, Object> context;
     private DimFilter dimFilter;
     private QueryGranularity granularity;
@@ -988,6 +1098,7 @@ public class Druids
       return new SelectQuery(
           dataSource,
           querySegmentSpec,
+          descending,
           dimFilter,
           granularity,
           dimensions,
@@ -1032,6 +1143,12 @@ public class Druids
     public SelectQueryBuilder intervals(List<Interval> l)
     {
       querySegmentSpec = new LegacySegmentSpec(l);
+      return this;
+    }
+
+    public SelectQueryBuilder descending(boolean descending)
+    {
+      this.descending = descending;
       return this;
     }
 
@@ -1101,9 +1218,9 @@ public class Druids
 
   /**
    * A Builder for DataSourceMetadataQuery.
-   *
+   * <p/>
    * Required: dataSource() must be called before build()
-   *
+   * <p/>
    * Usage example:
    * <pre><code>
    *   DataSourceMetadataQueryBuilder query = new DataSourceMetadataQueryBuilder()

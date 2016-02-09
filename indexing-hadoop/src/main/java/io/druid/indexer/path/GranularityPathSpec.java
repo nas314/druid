@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.indexer.path;
@@ -28,8 +30,8 @@ import io.druid.indexer.hadoop.FSSpideringIterator;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.mapreduce.InputFormat;
 import org.apache.hadoop.mapreduce.Job;
-import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.joda.time.DateTime;
 import org.joda.time.Interval;
 import org.joda.time.format.DateTimeFormat;
@@ -49,6 +51,7 @@ public class GranularityPathSpec implements PathSpec
   private String filePattern;
   private Granularity dataGranularity;
   private String pathFormat;
+  private Class<? extends InputFormat> inputFormat;
 
   @JsonProperty
   public String getInputPath()
@@ -59,6 +62,17 @@ public class GranularityPathSpec implements PathSpec
   public void setInputPath(String inputPath)
   {
     this.inputPath = inputPath;
+  }
+
+  @JsonProperty
+  public Class<? extends InputFormat> getInputFormat()
+  {
+    return inputFormat;
+  }
+
+  public void setInputFormat(Class<? extends InputFormat> inputFormat)
+  {
+    this.inputFormat = inputFormat;
   }
 
   @JsonProperty
@@ -139,7 +153,7 @@ public class GranularityPathSpec implements PathSpec
 
     for (String path : paths) {
       log.info("Appending path[%s]", path);
-      FileInputFormat.addInputPath(job, new Path(path));
+      StaticPathSpec.addToMultipleInputs(config, job, path, inputFormat);
     }
 
     return job;

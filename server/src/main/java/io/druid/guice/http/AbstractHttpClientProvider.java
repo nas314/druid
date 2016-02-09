@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.guice.http;
@@ -36,9 +38,7 @@ public abstract class AbstractHttpClientProvider<HttpClientType> implements Prov
   private final Key<Supplier<DruidHttpClientConfig>> configKey;
   private final Key<SSLContext> sslContextKey;
 
-  private Provider<Supplier<DruidHttpClientConfig>> configProvider;
-  private Provider<Lifecycle> lifecycleProvider;
-  private Binding<SSLContext> sslContextBinding;
+  private Injector injector;
 
   public AbstractHttpClientProvider()
   {
@@ -73,9 +73,7 @@ public abstract class AbstractHttpClientProvider<HttpClientType> implements Prov
   @Inject
   public void configure(Injector injector)
   {
-    configProvider = injector.getProvider(configKey);
-    sslContextBinding = injector.getExistingBinding(sslContextKey);
-    lifecycleProvider = injector.getProvider(Lifecycle.class);
+    this.injector = injector;
   }
 
   public Key<Supplier<DruidHttpClientConfig>> getConfigKey()
@@ -90,16 +88,16 @@ public abstract class AbstractHttpClientProvider<HttpClientType> implements Prov
 
   public Provider<Supplier<DruidHttpClientConfig>> getConfigProvider()
   {
-    return configProvider;
+    return injector.getProvider(configKey);
   }
 
   public Provider<Lifecycle> getLifecycleProvider()
   {
-    return lifecycleProvider;
+    return injector.getProvider(Lifecycle.class);
   }
 
   public Binding<SSLContext> getSslContextBinding()
   {
-    return sslContextBinding;
+    return injector.getExistingBinding(sslContextKey);
   }
 }

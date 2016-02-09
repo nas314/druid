@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.query.groupby.having;
@@ -20,7 +22,6 @@ package io.druid.query.groupby.having;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
 import io.druid.data.input.MapBasedInputRow;
 import io.druid.data.input.Row;
 import io.druid.jackson.DefaultObjectMapper;
@@ -86,48 +87,69 @@ public class HavingSpecTest
     assertEquals(andHavingSpec,  mapper.convertValue(payloadMap, AndHavingSpec.class));
   }
 
-  @Test
-  public void testGreaterThanHavingSpec() {
-    GreaterThanHavingSpec spec = new GreaterThanHavingSpec("metric", 10.003);
-    assertFalse(spec.eval(ROW));
+  @Test(expected = IllegalArgumentException.class)
+  public void testTypeTypo()
+  {
+    Map<String, Object> greaterMap = ImmutableMap.<String, Object>of(
+        "type", "nonExistingType",
+        "aggregation", "agg",
+        "value", 1.3
+    );
+    ObjectMapper mapper = new DefaultObjectMapper();
+    HavingSpec spec = mapper.convertValue (greaterMap, HavingSpec.class);
 
-    spec = new GreaterThanHavingSpec("metric", 10);
-    assertFalse(spec.eval(ROW));
-
-    spec = new GreaterThanHavingSpec("metric", 9);
-    assertTrue(spec.eval(ROW));
   }
 
-  private MapBasedInputRow makeRow(long ts, String dim, int value)
-  {
-    List<String> dimensions = Lists.newArrayList(dim);
-    Map<String, Object> metrics = ImmutableMap.of("metric", (Object) Float.valueOf(value));
+  @Test
+  public void testGreaterThanHavingSpec() {
+    GreaterThanHavingSpec spec = new GreaterThanHavingSpec("metric", Long.valueOf(Long.MAX_VALUE - 10));
+    assertFalse(spec.eval(getTestRow(Long.valueOf(Long.MAX_VALUE - 10))));
+    assertFalse(spec.eval(getTestRow(Long.valueOf(Long.MAX_VALUE - 15))));
+    assertTrue(spec.eval(getTestRow(Long.valueOf(Long.MAX_VALUE - 5))));
+    assertTrue(spec.eval(getTestRow(String.valueOf(Long.MAX_VALUE - 5))));
+    assertFalse(spec.eval(getTestRow(100.05f)));
 
-    return new MapBasedInputRow(ts, dimensions, metrics);
+    spec = new GreaterThanHavingSpec("metric", 100.56f);
+    assertFalse(spec.eval(getTestRow(100.56f)));
+    assertFalse(spec.eval(getTestRow(90.53f)));
+    assertFalse(spec.eval(getTestRow("90.53f")));
+    assertTrue(spec.eval(getTestRow(101.34f)));
+    assertTrue(spec.eval(getTestRow(Long.MAX_VALUE)));
   }
 
   @Test
   public void testLessThanHavingSpec() {
-    LessThanHavingSpec spec = new LessThanHavingSpec("metric", 10);
-    assertFalse(spec.eval(ROW));
+    LessThanHavingSpec spec = new LessThanHavingSpec("metric", Long.valueOf(Long.MAX_VALUE - 10));
+    assertFalse(spec.eval(getTestRow(Long.valueOf(Long.MAX_VALUE - 10))));
+    assertTrue(spec.eval(getTestRow(Long.valueOf(Long.MAX_VALUE - 15))));
+    assertTrue(spec.eval(getTestRow(String.valueOf(Long.MAX_VALUE - 15))));
+    assertFalse(spec.eval(getTestRow(Long.valueOf(Long.MAX_VALUE - 5))));
+    assertTrue(spec.eval(getTestRow(100.05f)));
 
-    spec = new LessThanHavingSpec("metric", 11);
-    assertTrue(spec.eval(ROW));
+    spec = new LessThanHavingSpec("metric", 100.56f);
+    assertFalse(spec.eval(getTestRow(100.56f)));
+    assertTrue(spec.eval(getTestRow(90.53f)));
+    assertFalse(spec.eval(getTestRow(101.34f)));
+    assertFalse(spec.eval(getTestRow("101.34f")));
+    assertFalse(spec.eval(getTestRow(Long.MAX_VALUE)));
+  }
 
-    spec = new LessThanHavingSpec("metric", 9);
-    assertFalse(spec.eval(ROW));
+  private Row getTestRow(Object metricValue)
+  {
+    return new MapBasedInputRow(0, new ArrayList<String>(), ImmutableMap.of("metric", metricValue));
   }
 
   @Test
   public void testEqualHavingSpec() {
-    EqualToHavingSpec spec = new EqualToHavingSpec("metric", 10);
-    assertTrue(spec.eval(ROW));
+    EqualToHavingSpec spec = new EqualToHavingSpec("metric", Long.valueOf(Long.MAX_VALUE - 10));
+    assertTrue(spec.eval(getTestRow(Long.valueOf(Long.MAX_VALUE - 10))));
+    assertFalse(spec.eval(getTestRow(Long.valueOf(Long.MAX_VALUE - 5))));
+    assertFalse(spec.eval(getTestRow(100.05f)));
 
-    spec = new EqualToHavingSpec("metric", 9);
-    assertFalse(spec.eval(ROW));
-
-    spec = new EqualToHavingSpec("metric", 11);
-    assertFalse(spec.eval(ROW));
+    spec = new EqualToHavingSpec("metric", 100.56f);
+    assertTrue(spec.eval(getTestRow(100.56f)));
+    assertFalse(spec.eval(getTestRow(90.53f)));
+    assertFalse(spec.eval(getTestRow(Long.MAX_VALUE)));
   }
 
   private static class CountingHavingSpec implements HavingSpec {

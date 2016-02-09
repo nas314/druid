@@ -1,33 +1,35 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.storage.hdfs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.io.ByteStreams;
-import com.google.common.io.OutputSupplier;
+import com.google.common.io.ByteSink;
+import com.google.common.io.ByteSource;
 import com.google.inject.Inject;
+import com.metamx.common.CompressionUtils;
 import com.metamx.common.logger.Logger;
 import io.druid.segment.SegmentUtils;
 import io.druid.segment.loading.DataSegmentPusher;
 import io.druid.segment.loading.DataSegmentPusherUtil;
 import io.druid.timeline.DataSegment;
-import io.druid.utils.CompressionUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
@@ -57,25 +59,35 @@ public class HdfsDataSegmentPusher implements DataSegmentPusher
     this.config = config;
     this.hadoopConfig = hadoopConfig;
     this.jsonMapper = jsonMapper;
+
+    log.info("Configured HDFS as deep storage");
   }
 
   @Override
   public String getPathForHadoop(String dataSource)
   {
-    return new Path(config.getStorageDirectory(), dataSource).toUri().toString();
+    return new Path(config.getStorageDirectory()).toUri().toString();
   }
 
   @Override
   public DataSegment push(File inDir, DataSegment segment) throws IOException
   {
     final String storageDir = DataSegmentPusherUtil.getHdfsStorageDir(segment);
+
+    log.info(
+        "Copying segment[%s] to HDFS at location[%s/%s]",
+        segment.getIdentifier(),
+        config.getStorageDirectory(),
+        storageDir
+    );
+
     Path outFile = new Path(String.format("%s/%s/index.zip", config.getStorageDirectory(), storageDir));
     FileSystem fs = outFile.getFileSystem(hadoopConfig);
 
     fs.mkdirs(outFile.getParent());
     log.info("Compressing files from[%s] to [%s]", inDir, outFile);
 
-    long size;
+    final long size;
     try (FSDataOutputStream out = fs.create(outFile)) {
       size = CompressionUtils.zip(inDir, out);
     }
@@ -93,10 +105,9 @@ public class HdfsDataSegmentPusher implements DataSegmentPusher
   {
     final Path descriptorFile = new Path(outDir, "descriptor.json");
     log.info("Creating descriptor file at[%s]", descriptorFile);
-    ByteStreams.copy(
-        ByteStreams.newInputStreamSupplier(jsonMapper.writeValueAsBytes(segment)),
-        new HdfsOutputStreamSupplier(fs, descriptorFile)
-    );
+    ByteSource
+        .wrap(jsonMapper.writeValueAsBytes(segment))
+        .copyTo(new HdfsOutputStreamSupplier(fs, descriptorFile));
     return segment;
   }
 
@@ -105,7 +116,7 @@ public class HdfsDataSegmentPusher implements DataSegmentPusher
     return ImmutableMap.<String, Object>of("type", "hdfs", "path", outFile.toString());
   }
 
-  private static class HdfsOutputStreamSupplier implements OutputSupplier<OutputStream>
+  private static class HdfsOutputStreamSupplier extends ByteSink
   {
     private final FileSystem fs;
     private final Path descriptorFile;
@@ -117,7 +128,7 @@ public class HdfsDataSegmentPusher implements DataSegmentPusher
     }
 
     @Override
-    public OutputStream getOutput() throws IOException
+    public OutputStream openStream() throws IOException
     {
       return fs.create(descriptorFile);
     }

@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.metadata.storage.postgresql;
@@ -28,6 +30,8 @@ import org.skife.jdbi.v2.DBI;
 import org.skife.jdbi.v2.Handle;
 import org.skife.jdbi.v2.tweak.HandleCallback;
 import org.skife.jdbi.v2.util.StringMapper;
+
+import java.sql.SQLException;
 
 public class PostgreSQLConnector extends SQLMetadataConnector
 {
@@ -49,6 +53,8 @@ public class PostgreSQLConnector extends SQLMetadataConnector
     datasource.setDriverClassName("org.postgresql.Driver");
 
     this.dbi = new DBI(datasource);
+
+    log.info("Configured PostgreSQL as metadata storage");
   }
 
   @Override
@@ -112,4 +118,17 @@ public class PostgreSQLConnector extends SQLMetadataConnector
 
   @Override
   public DBI getDBI() { return dbi; }
+
+  @Override
+  protected boolean connectorIsTransientException(Throwable e)
+  {
+    if(e instanceof SQLException) {
+      final String sqlState = ((SQLException) e).getSQLState();
+      // limited to errors that are likely to be resolved within a few retries
+      // retry on connection errors and insufficient resources
+      // see http://www.postgresql.org/docs/current/static/errcodes-appendix.html for details
+      return sqlState != null && (sqlState.startsWith("08") || sqlState.startsWith("53"));
+    }
+    return false;
+  }
 }

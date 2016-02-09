@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.segment;
@@ -43,6 +45,7 @@ import io.druid.segment.serde.ComplexMetrics;
 import io.druid.timeline.TimelineObjectHolder;
 import io.druid.timeline.VersionedIntervalTimeline;
 import io.druid.timeline.partition.NoneShardSpec;
+import io.druid.timeline.partition.PartitionChunk;
 import io.druid.timeline.partition.ShardSpec;
 import org.joda.time.DateTime;
 import org.joda.time.Interval;
@@ -75,11 +78,16 @@ public class SchemalessIndex
       new CountAggregatorFactory("count")
   };
 
+  private static final IndexSpec indexSpec = new IndexSpec();
+
   private static final List<Map<String, Object>> events = Lists.newArrayList();
 
   private static final Map<Integer, Map<Integer, QueryableIndex>> incrementalIndexes = Maps.newHashMap();
   private static final Map<Integer, Map<Integer, QueryableIndex>> mergedIndexes = Maps.newHashMap();
   private static final List<QueryableIndex> rowPersistedIndexes = Lists.newArrayList();
+
+  private static final IndexMerger INDEX_MERGER = TestHelper.getTestIndexMerger();
+  private static final IndexIO INDEX_IO = TestHelper.getTestIndexIO();
 
   private static IncrementalIndex index = null;
   private static QueryableIndex mergedIndex = null;
@@ -145,7 +153,8 @@ public class SchemalessIndex
 
         try {
           theIndex.add(new MapBasedInputRow(timestamp, dims, event));
-        } catch(IndexSizeExceededException e) {
+        }
+        catch (IndexSizeExceededException e) {
           Throwables.propagate(e);
         }
 
@@ -182,12 +191,15 @@ public class SchemalessIndex
         mergedFile.mkdirs();
         mergedFile.deleteOnExit();
 
-        IndexMerger.persist(top, topFile);
-        IndexMerger.persist(bottom, bottomFile);
+        INDEX_MERGER.persist(top, topFile, indexSpec);
+        INDEX_MERGER.persist(bottom, bottomFile, indexSpec);
 
-        mergedIndex = io.druid.segment.IndexIO.loadIndex(
-            IndexMerger.mergeQueryableIndex(
-                Arrays.asList(IndexIO.loadIndex(topFile), IndexIO.loadIndex(bottomFile)), METRIC_AGGS, mergedFile
+        mergedIndex = INDEX_IO.loadIndex(
+            INDEX_MERGER.mergeQueryableIndex(
+                Arrays.asList(INDEX_IO.loadIndex(topFile), INDEX_IO.loadIndex(bottomFile)),
+                METRIC_AGGS,
+                mergedFile,
+                indexSpec
             )
         );
 
@@ -227,9 +239,12 @@ public class SchemalessIndex
         mergedFile.mkdirs();
         mergedFile.deleteOnExit();
 
-        QueryableIndex index = IndexIO.loadIndex(
-            IndexMerger.mergeQueryableIndex(
-                Arrays.asList(rowPersistedIndexes.get(index1), rowPersistedIndexes.get(index2)), METRIC_AGGS, mergedFile
+        QueryableIndex index = INDEX_IO.loadIndex(
+            INDEX_MERGER.mergeQueryableIndex(
+                Arrays.asList(rowPersistedIndexes.get(index1), rowPersistedIndexes.get(index2)),
+                METRIC_AGGS,
+                mergedFile,
+                indexSpec
             )
         );
 
@@ -264,8 +279,8 @@ public class SchemalessIndex
           indexesToMerge.add(rowPersistedIndexes.get(indexes[i]));
         }
 
-        QueryableIndex index = IndexIO.loadIndex(
-            IndexMerger.mergeQueryableIndex(indexesToMerge, METRIC_AGGS, mergedFile)
+        QueryableIndex index = INDEX_IO.loadIndex(
+            INDEX_MERGER.mergeQueryableIndex(indexesToMerge, METRIC_AGGS, mergedFile, indexSpec)
         );
 
         return index;
@@ -346,8 +361,8 @@ public class SchemalessIndex
           tmpFile.mkdirs();
           tmpFile.deleteOnExit();
 
-          IndexMerger.persist(rowIndex, tmpFile);
-          rowPersistedIndexes.add(IndexIO.loadIndex(tmpFile));
+          INDEX_MERGER.persist(rowIndex, tmpFile, indexSpec);
+          rowPersistedIndexes.add(INDEX_IO.loadIndex(tmpFile));
         }
       }
       catch (IOException e) {
@@ -406,7 +421,7 @@ public class SchemalessIndex
       theFile.mkdirs();
       theFile.deleteOnExit();
       filesToMap.add(theFile);
-      IndexMerger.persist(index, theFile);
+      INDEX_MERGER.persist(index, theFile, indexSpec);
     }
 
     return filesToMap;
@@ -426,8 +441,6 @@ public class SchemalessIndex
 
       List<File> filesToMap = makeFilesToMap(tmpFile, files);
 
-      List<IndexableAdapter> adapters = Lists.newArrayList();
-
       VersionedIntervalTimeline<Integer, File> timeline = new VersionedIntervalTimeline<Integer, File>(
           Ordering.natural().nullsFirst()
       );
@@ -438,35 +451,51 @@ public class SchemalessIndex
         timeline.add(intervals.get(i), i, noneShardSpec.createChunk(filesToMap.get(i)));
       }
 
-      List<Pair<File, Interval>> intervalsToMerge = Lists.transform(
-          timeline.lookup(new Interval("1000-01-01/3000-01-01")),
-          new Function<TimelineObjectHolder<Integer, File>, Pair<File, Interval>>()
-          {
-            @Override
-            public Pair<File, Interval> apply(@Nullable TimelineObjectHolder<Integer, File> input)
-            {
-              return new Pair<File, Interval>(input.getObject().getChunk(0).getObject(), input.getInterval());
-            }
-          }
+      final List<IndexableAdapter> adapters = Lists.newArrayList(
+          Iterables.concat(
+              // TimelineObjectHolder is actually an iterable of iterable of indexable adapters
+              Iterables.transform(
+                  timeline.lookup(new Interval("1000-01-01/3000-01-01")),
+                  new Function<TimelineObjectHolder<Integer, File>, Iterable<IndexableAdapter>>()
+                  {
+                    @Override
+                    public Iterable<IndexableAdapter> apply(final TimelineObjectHolder<Integer, File> timelineObjectHolder)
+                    {
+                      return Iterables.transform(
+                          timelineObjectHolder.getObject(),
+
+                          // Each chunk can be used to build the actual IndexableAdapter
+                          new Function<PartitionChunk<File>, IndexableAdapter>()
+                          {
+                            @Override
+                            public IndexableAdapter apply(PartitionChunk<File> chunk)
+                            {
+                              try {
+                                return new RowboatFilteringIndexAdapter(
+                                    new QueryableIndexIndexableAdapter(INDEX_IO.loadIndex(chunk.getObject())),
+                                    new Predicate<Rowboat>()
+                                    {
+                                      @Override
+                                      public boolean apply(Rowboat input)
+                                      {
+                                        return timelineObjectHolder.getInterval().contains(input.getTimestamp());
+                                      }
+                                    }
+                                );
+                              }
+                              catch (IOException e) {
+                                throw Throwables.propagate(e);
+                              }
+                            }
+                          }
+                      );
+                    }
+                  }
+              )
+          )
       );
 
-      for (final Pair<File, Interval> pair : intervalsToMerge) {
-        adapters.add(
-            new RowboatFilteringIndexAdapter(
-                new QueryableIndexIndexableAdapter(IndexIO.loadIndex(pair.lhs)),
-                new Predicate<Rowboat>()
-                {
-                  @Override
-                  public boolean apply(@Nullable Rowboat input)
-                  {
-                    return pair.rhs.contains(input.getTimestamp());
-                  }
-                }
-            )
-        );
-      }
-
-      return IndexIO.loadIndex(IndexMerger.append(adapters, mergedFile));
+      return INDEX_IO.loadIndex(INDEX_MERGER.append(adapters, null, mergedFile, indexSpec));
     }
     catch (IOException e) {
       throw Throwables.propagate(e);
@@ -484,8 +513,8 @@ public class SchemalessIndex
 
       List<File> filesToMap = makeFilesToMap(tmpFile, files);
 
-      return IndexIO.loadIndex(
-          IndexMerger.mergeQueryableIndex(
+      return INDEX_IO.loadIndex(
+          INDEX_MERGER.mergeQueryableIndex(
               Lists.newArrayList(
                   Iterables.transform(
                       filesToMap,
@@ -495,7 +524,7 @@ public class SchemalessIndex
                         public QueryableIndex apply(@Nullable File input)
                         {
                           try {
-                            return IndexIO.loadIndex(input);
+                            return INDEX_IO.loadIndex(input);
                           }
                           catch (IOException e) {
                             throw Throwables.propagate(e);
@@ -505,7 +534,8 @@ public class SchemalessIndex
                   )
               ),
               METRIC_AGGS,
-              mergedFile
+              mergedFile,
+              indexSpec
           )
       );
     }

@@ -1,18 +1,18 @@
 /*
  * Licensed to Metamarkets Group Inc. (Metamarkets) under one
- * or more contributor license agreements.  See the NOTICE file
+ * or more contributor license agreements. See the NOTICE file
  * distributed with this work for additional information
- * regarding copyright ownership.  Metamarkets licenses this file
+ * regarding copyright ownership. Metamarkets licenses this file
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * with the License. You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
+ * KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations
  * under the License.
  */
@@ -24,6 +24,7 @@ import com.google.common.collect.Maps;
 import io.druid.query.extraction.ExtractionFn;
 import io.druid.segment.data.IndexedInts;
 
+import java.io.IOException;
 import java.util.Iterator;
 import java.util.Map;
 
@@ -31,6 +32,7 @@ public class SingleScanTimeDimSelector implements DimensionSelector
 {
   private final ExtractionFn extractionFn;
   private final LongColumnSelector selector;
+  private final boolean descending;
 
   private final Map<Integer, String> timeValues = Maps.newHashMap();
   private String currentValue = null;
@@ -42,7 +44,7 @@ public class SingleScanTimeDimSelector implements DimensionSelector
   // - it assumes time values are scanned once and values are grouped together
   //   (i.e. we never revisit a timestamp we have seen before, unless it is the same as the last accessed one)
   // - it also applies and caches extraction function values at the DimSelector level to speed things up
-  public SingleScanTimeDimSelector(LongColumnSelector selector, ExtractionFn extractionFn)
+  public SingleScanTimeDimSelector(LongColumnSelector selector, ExtractionFn extractionFn, boolean descending)
   {
     if (extractionFn == null) {
       throw new UnsupportedOperationException("time dimension must provide an extraction function");
@@ -50,6 +52,7 @@ public class SingleScanTimeDimSelector implements DimensionSelector
 
     this.extractionFn = extractionFn;
     this.selector = selector;
+    this.descending = descending;
   }
 
   @Override
@@ -71,7 +74,7 @@ public class SingleScanTimeDimSelector implements DimensionSelector
     // we can also avoid creating a dimension value and corresponding index
     // and use the current one
     else if (timestamp != currentTimestamp) {
-      if(timestamp < currentTimestamp) {
+      if (descending ? timestamp > currentTimestamp : timestamp < currentTimestamp) {
         // re-using this selector for multiple scans would cause the same rows to return different IDs
         // we might want to re-visit if we ever need to do multiple scans with this dimension selector
         throw new IllegalStateException("cannot re-use time dimension selector for multiple scans");
@@ -108,6 +111,18 @@ public class SingleScanTimeDimSelector implements DimensionSelector
       public Iterator<Integer> iterator()
       {
         return Iterators.singletonIterator(dimensionValueIndex);
+      }
+
+      @Override
+      public void fill(int index, int[] toFill)
+      {
+        throw new UnsupportedOperationException("fill not supported");
+      }
+
+      @Override
+      public void close() throws IOException
+      {
+
       }
     };
   }

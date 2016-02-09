@@ -1,26 +1,28 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.query.select;
 
-import com.google.common.base.Preconditions;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonTypeName;
+import com.google.common.base.Preconditions;
 import io.druid.granularity.QueryGranularity;
 import io.druid.query.BaseQuery;
 import io.druid.query.DataSource;
@@ -47,6 +49,7 @@ public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
   public SelectQuery(
       @JsonProperty("dataSource") DataSource dataSource,
       @JsonProperty("intervals") QuerySegmentSpec querySegmentSpec,
+      @JsonProperty("descending") boolean descending,
       @JsonProperty("filter") DimFilter dimFilter,
       @JsonProperty("granularity") QueryGranularity granularity,
       @JsonProperty("dimensions") List<String> dimensions,
@@ -55,7 +58,7 @@ public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
       @JsonProperty("context") Map<String, Object> context
   )
   {
-    super(dataSource, querySegmentSpec, context);
+    super(dataSource, querySegmentSpec, descending, context);
     this.dimFilter = dimFilter;
     this.granularity = granularity;
     this.dimensions = dimensions;
@@ -63,6 +66,17 @@ public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
     this.pagingSpec = pagingSpec;
 
     Preconditions.checkNotNull(pagingSpec, "must specify a pagingSpec");
+    Preconditions.checkArgument(checkPagingSpec(pagingSpec, descending), "invalid pagingSpec");
+  }
+
+  private boolean checkPagingSpec(PagingSpec pagingSpec, boolean descending)
+  {
+    for (Integer value : pagingSpec.getPagingIdentifiers().values()) {
+      if (descending ^ (value < 0)) {
+        return false;
+      }
+    }
+    return pagingSpec.getThreshold() >= 0;
   }
 
   @Override
@@ -107,11 +121,17 @@ public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
     return metrics;
   }
 
+  public PagingOffset getPagingOffset(String identifier)
+  {
+    return pagingSpec.getOffset(identifier, isDescending());
+  }
+
   public SelectQuery withQuerySegmentSpec(QuerySegmentSpec querySegmentSpec)
   {
     return new SelectQuery(
         getDataSource(),
         querySegmentSpec,
+        isDescending(),
         dimFilter,
         granularity,
         dimensions,
@@ -127,6 +147,7 @@ public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
     return new SelectQuery(
         dataSource,
         getQuerySegmentSpec(),
+        isDescending(),
         dimFilter,
         granularity,
         dimensions,
@@ -141,6 +162,7 @@ public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
     return new SelectQuery(
         getDataSource(),
         getQuerySegmentSpec(),
+        isDescending(),
         dimFilter,
         granularity,
         dimensions,
@@ -156,6 +178,7 @@ public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
     return "SelectQuery{" +
            "dataSource='" + getDataSource() + '\'' +
            ", querySegmentSpec=" + getQuerySegmentSpec() +
+           ", descending=" + isDescending() +
            ", dimFilter=" + dimFilter +
            ", granularity=" + granularity +
            ", dimensions=" + dimensions +

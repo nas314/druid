@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.query;
@@ -20,6 +22,7 @@ package io.druid.query;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
+import com.metamx.common.guava.ResourceClosingSequence;
 import com.metamx.common.guava.Sequence;
 import com.metamx.common.guava.Sequences;
 import com.metamx.common.logger.Logger;
@@ -31,7 +34,9 @@ import io.druid.segment.Cursor;
 import io.druid.segment.StorageAdapter;
 import org.joda.time.Interval;
 
+import java.io.Closeable;
 import java.util.List;
+import java.util.Map;
 
 /**
  */
@@ -54,6 +59,7 @@ public class QueryRunnerHelper
       final StorageAdapter adapter,
       List<Interval> queryIntervals,
       Filter filter,
+      boolean descending,
       QueryGranularity granularity,
       final Function<Cursor, Result<T>> mapFn
   )
@@ -64,7 +70,7 @@ public class QueryRunnerHelper
 
     return Sequences.filter(
         Sequences.map(
-            adapter.makeCursors(filter, queryIntervals.get(0), granularity),
+            adapter.makeCursors(filter, queryIntervals.get(0), granularity, descending),
             new Function<Cursor, Result<T>>()
             {
               @Override
@@ -77,5 +83,16 @@ public class QueryRunnerHelper
         ),
         Predicates.<Result<T>>notNull()
     );
+  }
+
+  public static <T>  QueryRunner<T> makeClosingQueryRunner(final QueryRunner<T> runner, final Closeable closeable){
+    return new QueryRunner<T>()
+    {
+      @Override
+      public Sequence<T> run(Query<T> query, Map<String, Object> responseContext)
+      {
+        return new ResourceClosingSequence<>(runner.run(query, responseContext), closeable);
+      }
+    };
   }
 }

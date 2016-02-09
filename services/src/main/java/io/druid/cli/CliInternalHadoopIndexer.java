@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.cli;
@@ -28,18 +30,26 @@ import com.google.inject.Module;
 import com.google.inject.TypeLiteral;
 import com.google.inject.name.Names;
 import com.metamx.common.logger.Logger;
-import io.airlift.command.Arguments;
-import io.airlift.command.Command;
+import io.airlift.airline.Arguments;
+import io.airlift.airline.Command;
+import io.druid.guice.LazySingleton;
 import io.druid.indexer.HadoopDruidDetermineConfigurationJob;
 import io.druid.indexer.HadoopDruidIndexerConfig;
 import io.druid.indexer.HadoopDruidIndexerJob;
+import io.druid.indexer.HadoopIngestionSpec;
 import io.druid.indexer.JobHelper;
 import io.druid.indexer.Jobby;
 import io.druid.indexer.MetadataStorageUpdaterJobHandler;
+import io.druid.indexer.path.MetadataStoreBasedUsedSegmentLister;
 import io.druid.indexer.updater.MetadataStorageUpdaterJobSpec;
+import io.druid.indexing.overlord.IndexerMetadataStorageCoordinator;
+import io.druid.metadata.IndexerSQLMetadataStorageCoordinator;
 import io.druid.metadata.MetadataStorageConnectorConfig;
+import io.druid.metadata.MetadataStorageTablesConfig;
 
 import java.io.File;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.List;
 import java.util.Properties;
 
@@ -82,6 +92,10 @@ public class CliInternalHadoopIndexer extends GuiceRunnable
 
             binder.bind(new TypeLiteral<Supplier<MetadataStorageConnectorConfig>>() {})
                   .toInstance(metadataSpec);
+            binder.bind(MetadataStorageTablesConfig.class).toInstance(metadataSpec.getMetadataStorageTablesConfig());
+            binder.bind(IndexerMetadataStorageCoordinator.class).to(IndexerSQLMetadataStorageCoordinator.class).in(
+                LazySingleton.class
+            );
           }
         }
     );
@@ -93,10 +107,22 @@ public class CliInternalHadoopIndexer extends GuiceRunnable
     try {
       Injector injector = makeInjector();
 
-      MetadataStorageUpdaterJobSpec metadataSpec = getHadoopDruidIndexerConfig().getSchema().getIOConfig().getMetadataUpdateSpec();
+      config = getHadoopDruidIndexerConfig();
+
+      MetadataStorageUpdaterJobSpec metadataSpec = config.getSchema().getIOConfig().getMetadataUpdateSpec();
       // override metadata storage type based on HadoopIOConfig
       Preconditions.checkNotNull(metadataSpec.getType(), "type in metadataUpdateSpec must not be null");
       injector.getInstance(Properties.class).setProperty("druid.metadata.storage.type", metadataSpec.getType());
+
+      config = HadoopDruidIndexerConfig.fromSpec(
+          HadoopIngestionSpec.updateSegmentListIfDatasourcePathSpecIsUsed(
+              config.getSchema(),
+              HadoopDruidIndexerConfig.JSON_MAPPER,
+              new MetadataStoreBasedUsedSegmentLister(
+                  injector.getInstance(IndexerMetadataStorageCoordinator.class)
+              )
+          )
+      );
 
       List<Jobby> jobs = Lists.newArrayList();
       jobs.add(new HadoopDruidDetermineConfigurationJob(config));
@@ -116,7 +142,26 @@ public class CliInternalHadoopIndexer extends GuiceRunnable
         if (argumentSpec.startsWith("{")) {
           config = HadoopDruidIndexerConfig.fromString(argumentSpec);
         } else {
-          config = HadoopDruidIndexerConfig.fromFile(new File(argumentSpec));
+          File localConfigFile = null;
+
+          try {
+            final URI argumentSpecUri = new URI(argumentSpec);
+            final String argumentSpecScheme = argumentSpecUri.getScheme();
+
+            if (argumentSpecScheme == null || argumentSpecScheme.equals("file")) {
+              // File URI.
+              localConfigFile = new File(argumentSpecUri.getPath());
+            }
+          } catch (URISyntaxException e) {
+            // Not a URI, assume it's a local file.
+            localConfigFile = new File(argumentSpec);
+          }
+
+          if (localConfigFile != null) {
+            config = HadoopDruidIndexerConfig.fromFile(localConfigFile);
+          } else {
+            config = HadoopDruidIndexerConfig.fromDistributedFileSystem(argumentSpec);
+          }
         }
       }
       catch (Exception e) {

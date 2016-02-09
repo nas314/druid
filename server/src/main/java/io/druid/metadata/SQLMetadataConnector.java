@@ -1,38 +1,49 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.metadata;
 
+import com.google.common.base.Predicate;
 import com.google.common.base.Supplier;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.metamx.common.ISE;
+import com.metamx.common.RetryUtils;
 import com.metamx.common.logger.Logger;
 import org.apache.commons.dbcp2.BasicDataSource;
 import org.skife.jdbi.v2.Batch;
 import org.skife.jdbi.v2.DBI;
 import org.skife.jdbi.v2.Handle;
-import org.skife.jdbi.v2.IDBI;
 import org.skife.jdbi.v2.TransactionCallback;
 import org.skife.jdbi.v2.TransactionStatus;
+import org.skife.jdbi.v2.exceptions.DBIException;
+import org.skife.jdbi.v2.exceptions.UnableToExecuteStatementException;
+import org.skife.jdbi.v2.exceptions.UnableToObtainConnectionException;
 import org.skife.jdbi.v2.tweak.HandleCallback;
 import org.skife.jdbi.v2.util.ByteArrayMapper;
 import org.skife.jdbi.v2.util.IntegerMapper;
 
+import java.sql.SQLException;
+import java.sql.SQLRecoverableException;
+import java.sql.SQLTransientException;
 import java.util.List;
+import java.util.concurrent.Callable;
 
 public abstract class SQLMetadataConnector implements MetadataStorageConnector
 {
@@ -41,32 +52,43 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
 
   private final Supplier<MetadataStorageConnectorConfig> config;
   private final Supplier<MetadataStorageTablesConfig> tablesConfigSupplier;
+  private final Predicate<Throwable> shouldRetry;
 
-  public SQLMetadataConnector(Supplier<MetadataStorageConnectorConfig> config,
-                              Supplier<MetadataStorageTablesConfig> tablesConfigSupplier
+  public SQLMetadataConnector(
+      Supplier<MetadataStorageConnectorConfig> config,
+      Supplier<MetadataStorageTablesConfig> tablesConfigSupplier
   )
   {
     this.config = config;
     this.tablesConfigSupplier = tablesConfigSupplier;
+    this.shouldRetry = new Predicate<Throwable>()
+    {
+      @Override
+      public boolean apply(Throwable e)
+      {
+        return isTransientException(e);
+      }
+    };
   }
 
   /**
    * SQL type to use for payload data (e.g. JSON blobs).
    * Must be a binary type, which values can be accessed using ResultSet.getBytes()
-   *
+   * <p/>
    * The resulting string will be interpolated into the table creation statement, e.g.
    * <code>CREATE TABLE druid_table ( payload <type> NOT NULL, ... )</code>
    *
    * @return String representing the SQL type
    */
-  protected String getPayloadType() {
+  protected String getPayloadType()
+  {
     return PAYLOAD_TYPE;
   }
 
   /**
    * Auto-incrementing SQL type to use for IDs
    * Must be an integer type, which values will be automatically set by the database
-   *
+   * <p/>
    * The resulting string will be interpolated into the table creation statement, e.g.
    * <code>CREATE TABLE druid_table ( id <type> NOT NULL, ... )</code>
    *
@@ -78,14 +100,64 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
 
   public abstract boolean tableExists(Handle handle, final String tableName);
 
-  protected boolean isTransientException(Throwable e) {
+  public <T> T retryWithHandle(final HandleCallback<T> callback)
+  {
+    final Callable<T> call = new Callable<T>()
+    {
+      @Override
+      public T call() throws Exception
+      {
+        return getDBI().withHandle(callback);
+      }
+    };
+    final int maxTries = 10;
+    try {
+      return RetryUtils.retry(call, shouldRetry, maxTries);
+    }
+    catch (Exception e) {
+      throw Throwables.propagate(e);
+    }
+  }
+
+  public <T> T retryTransaction(final TransactionCallback<T> callback)
+  {
+    final Callable<T> call = new Callable<T>()
+    {
+      @Override
+      public T call() throws Exception
+      {
+        return getDBI().inTransaction(callback);
+      }
+    };
+    final int maxTries = 10;
+    try {
+      return RetryUtils.retry(call, shouldRetry, maxTries);
+    }
+    catch (Exception e) {
+      throw Throwables.propagate(e);
+    }
+  }
+
+  public final boolean isTransientException(Throwable e)
+  {
+    return e != null && (e instanceof SQLTransientException
+                         || e instanceof SQLRecoverableException
+                         || e instanceof UnableToObtainConnectionException
+                         || e instanceof UnableToExecuteStatementException
+                         || connectorIsTransientException(e)
+                         || (e instanceof SQLException && isTransientException(e.getCause()))
+                         || (e instanceof DBIException && isTransientException(e.getCause())));
+  }
+
+  protected boolean connectorIsTransientException(Throwable e)
+  {
     return false;
   }
 
-  public void createTable(final IDBI dbi, final String tableName, final Iterable<String> sql)
+  public void createTable(final String tableName, final Iterable<String> sql)
   {
     try {
-      dbi.withHandle(
+      retryWithHandle(
           new HandleCallback<Void>()
           {
             @Override
@@ -94,7 +166,7 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
               if (!tableExists(handle, tableName)) {
                 log.info("Creating table[%s]", tableName);
                 final Batch batch = handle.createBatch();
-                for(String s : sql) {
+                for (String s : sql) {
                   batch.add(s);
                 }
                 batch.execute();
@@ -111,10 +183,34 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
     }
   }
 
-  public void createSegmentTable(final IDBI dbi, final String tableName)
+  public void createPendingSegmentsTable(final String tableName)
   {
     createTable(
-        dbi,
+        tableName,
+        ImmutableList.of(
+            String.format(
+                "CREATE TABLE %1$s (\n"
+                + "  id VARCHAR(255) NOT NULL,\n"
+                + "  dataSource VARCHAR(255) NOT NULL,\n"
+                + "  created_date VARCHAR(255) NOT NULL,\n"
+                + "  start VARCHAR(255) NOT NULL,\n"
+                + "  \"end\" VARCHAR(255) NOT NULL,\n"
+                + "  sequence_name VARCHAR(255) NOT NULL,\n"
+                + "  sequence_prev_id VARCHAR(255) NOT NULL,\n"
+                + "  sequence_name_prev_id_sha1 VARCHAR(255) NOT NULL,\n"
+                + "  payload %2$s NOT NULL,\n"
+                + "  PRIMARY KEY (id),\n"
+                + "  UNIQUE (sequence_name_prev_id_sha1)\n"
+                + ")",
+                tableName, getPayloadType()
+            )
+        )
+    );
+  }
+
+  public void createSegmentTable(final String tableName)
+  {
+    createTable(
         tableName,
         ImmutableList.of(
             String.format(
@@ -138,10 +234,9 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
     );
   }
 
-  public void createRulesTable(final IDBI dbi, final String tableName)
+  public void createRulesTable(final String tableName)
   {
     createTable(
-        dbi,
         tableName,
         ImmutableList.of(
             String.format(
@@ -159,10 +254,9 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
     );
   }
 
-  public void createConfigTable(final IDBI dbi, final String tableName)
+  public void createConfigTable(final String tableName)
   {
     createTable(
-        dbi,
         tableName,
         ImmutableList.of(
             String.format(
@@ -177,10 +271,9 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
     );
   }
 
-  public void createEntryTable(final IDBI dbi, final String tableName)
+  public void createEntryTable(final String tableName)
   {
     createTable(
-        dbi,
         tableName,
         ImmutableList.of(
             String.format(
@@ -200,10 +293,9 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
     );
   }
 
-  public void createLogTable(final IDBI dbi, final String tableName, final String entryTypeName)
+  public void createLogTable(final String tableName, final String entryTypeName)
   {
     createTable(
-        dbi,
         tableName,
         ImmutableList.of(
             String.format(
@@ -220,10 +312,9 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
     );
   }
 
-  public void createLockTable(final IDBI dbi, final String tableName, final String entryTypeName)
+  public void createLockTable(final String tableName, final String entryTypeName)
   {
     createTable(
-        dbi,
         tableName,
         ImmutableList.of(
             String.format(
@@ -292,23 +383,32 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
   public abstract DBI getDBI();
 
   @Override
-  public void createSegmentTable() {
+  public void createPendingSegmentsTable()
+  {
     if (config.get().isCreateTables()) {
-      createSegmentTable(getDBI(), tablesConfigSupplier.get().getSegmentsTable());
+      createPendingSegmentsTable(tablesConfigSupplier.get().getPendingSegmentsTable());
+    }
+  }
+
+  @Override
+  public void createSegmentTable()
+  {
+    if (config.get().isCreateTables()) {
+      createSegmentTable(tablesConfigSupplier.get().getSegmentsTable());
     }
   }
 
   @Override
   public void createRulesTable() {
     if (config.get().isCreateTables()) {
-      createRulesTable(getDBI(), tablesConfigSupplier.get().getRulesTable());
+      createRulesTable(tablesConfigSupplier.get().getRulesTable());
     }
   }
 
   @Override
   public void createConfigTable() {
     if (config.get().isCreateTables()) {
-      createConfigTable(getDBI(), tablesConfigSupplier.get().getConfigTable());
+      createConfigTable(tablesConfigSupplier.get().getConfigTable());
     }
   }
 
@@ -317,9 +417,9 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
     if (config.get().isCreateTables()) {
       final MetadataStorageTablesConfig tablesConfig = tablesConfigSupplier.get();
       final String entryType = tablesConfig.getTaskEntryType();
-      createEntryTable(getDBI(), tablesConfig.getEntryTable(entryType));
-      createLogTable(getDBI(), tablesConfig.getLogTable(entryType), entryType);
-      createLockTable(getDBI(), tablesConfig.getLockTable(entryType), entryType);
+      createEntryTable(tablesConfig.getEntryTable(entryType));
+      createLogTable(tablesConfig.getLogTable(entryType), entryType);
+      createLockTable(tablesConfig.getLockTable(entryType), entryType);
     }
   }
 
@@ -377,10 +477,9 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
     return dataSource;
   }
 
-  private void createAuditTable(final IDBI dbi, final String tableName)
+  private void createAuditTable(final String tableName)
   {
     createTable(
-        dbi,
         tableName,
         ImmutableList.of(
             String.format(
@@ -397,7 +496,7 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
                 tableName, getSerialType(), getPayloadType()
             ),
             String.format("CREATE INDEX idx_%1$s_key_time ON %1$s(audit_key, created_date)", tableName),
-            String.format("CREATE INDEX idx_%1$s_type_time ON %1$s(audit_key, created_date)", tableName),
+            String.format("CREATE INDEX idx_%1$s_type_time ON %1$s(type, created_date)", tableName),
             String.format("CREATE INDEX idx_%1$s_audit_time ON %1$s(created_date)", tableName)
         )
     );
@@ -405,7 +504,7 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
   @Override
   public void createAuditTable() {
     if (config.get().isCreateTables()) {
-      createAuditTable(getDBI(), tablesConfigSupplier.get().getAuditTable());
+      createAuditTable(tablesConfigSupplier.get().getAuditTable());
     }
   }
 

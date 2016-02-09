@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.server.coordinator.helper;
@@ -25,6 +27,7 @@ import com.metamx.emitter.service.ServiceMetricEvent;
 import io.druid.client.DruidDataSource;
 import io.druid.client.ImmutableDruidServer;
 import io.druid.collections.CountingMap;
+import io.druid.query.DruidMetrics;
 import io.druid.server.coordinator.CoordinatorStats;
 import io.druid.server.coordinator.DruidCluster;
 import io.druid.server.coordinator.DruidCoordinatorRuntimeParams;
@@ -44,7 +47,7 @@ public class DruidCoordinatorLogger implements DruidCoordinatorHelper
 
   private <T extends Number> void emitTieredStats(
       final ServiceEmitter emitter,
-      final String formatString,
+      final String metricName,
       final Map<String, T> statMap
   )
   {
@@ -53,9 +56,11 @@ public class DruidCoordinatorLogger implements DruidCoordinatorHelper
         String tier = entry.getKey();
         Number value = entry.getValue();
         emitter.emit(
-            new ServiceMetricEvent.Builder().build(
-                String.format(formatString, tier), value.doubleValue()
-            )
+            new ServiceMetricEvent.Builder()
+                .setDimension("tier", tier)
+                .build(
+                    metricName, value.doubleValue()
+                )
         );
       }
     }
@@ -78,6 +83,11 @@ public class DruidCoordinatorLogger implements DruidCoordinatorHelper
       }
     }
 
+    emitTieredStats(
+        emitter, "segment/assigned/count",
+        assigned
+    );
+
     Map<String, AtomicLong> dropped = stats.getPerTierStats().get("droppedCount");
     if (dropped != null) {
       for (Map.Entry<String, AtomicLong> entry : dropped.entrySet()) {
@@ -89,29 +99,34 @@ public class DruidCoordinatorLogger implements DruidCoordinatorHelper
     }
 
     emitTieredStats(
-        emitter, "coordinator/%s/cost/raw",
+        emitter, "segment/dropped/count",
+        dropped
+    );
+
+    emitTieredStats(
+        emitter, "segment/cost/raw",
         stats.getPerTierStats().get("initialCost")
     );
 
     emitTieredStats(
-        emitter, "coordinator/%s/cost/normalization",
+        emitter, "segment/cost/normalization",
         stats.getPerTierStats().get("normalization")
     );
 
     emitTieredStats(
-        emitter, "coordinator/%s/moved/count",
+        emitter, "segment/moved/count",
         stats.getPerTierStats().get("movedCount")
     );
 
     emitTieredStats(
-        emitter, "coordinator/%s/deleted/count",
+        emitter, "segment/deleted/count",
         stats.getPerTierStats().get("deletedCount")
     );
 
     Map<String, AtomicLong> normalized = stats.getPerTierStats().get("normalizedInitialCostTimesOneThousand");
     if (normalized != null) {
       emitTieredStats(
-          emitter, "coordinator/%s/cost/normalized",
+          emitter, "segment/cost/normalized",
           Maps.transformEntries(
               normalized,
               new Maps.EntryTransformer<String, AtomicLong, Number>()
@@ -136,9 +151,14 @@ public class DruidCoordinatorLogger implements DruidCoordinatorHelper
       }
     }
 
+    emitTieredStats(
+        emitter, "segment/unneeded/count",
+        stats.getPerTierStats().get("unneededCount")
+    );
+
     emitter.emit(
         new ServiceMetricEvent.Builder().build(
-            "coordinator/overShadowed/count", stats.getGlobalStats().get("overShadowedCount")
+            "segment/overShadowed/count", stats.getGlobalStats().get("overShadowedCount")
         )
     );
 
@@ -184,26 +204,26 @@ public class DruidCoordinatorLogger implements DruidCoordinatorHelper
       LoadQueuePeon queuePeon = entry.getValue();
       emitter.emit(
           new ServiceMetricEvent.Builder()
-              .setUser1(serverName).build(
-              "coordinator/loadQueue/size", queuePeon.getLoadQueueSize()
+              .setDimension(DruidMetrics.SERVER, serverName).build(
+              "segment/loadQueue/size", queuePeon.getLoadQueueSize()
           )
       );
       emitter.emit(
           new ServiceMetricEvent.Builder()
-              .setUser1(serverName).build(
-              "coordinator/loadQueue/failed", queuePeon.getAndResetFailedAssignCount()
+              .setDimension(DruidMetrics.SERVER, serverName).build(
+              "segment/loadQueue/failed", queuePeon.getAndResetFailedAssignCount()
           )
       );
       emitter.emit(
           new ServiceMetricEvent.Builder()
-              .setUser1(serverName).build(
-              "coordinator/loadQueue/count", queuePeon.getSegmentsToLoad().size()
+              .setDimension(DruidMetrics.SERVER, serverName).build(
+              "segment/loadQueue/count", queuePeon.getSegmentsToLoad().size()
           )
       );
       emitter.emit(
           new ServiceMetricEvent.Builder()
-              .setUser1(serverName).build(
-              "coordinator/dropQueue/count", queuePeon.getSegmentsToDrop().size()
+              .setDimension(DruidMetrics.SERVER, serverName).build(
+              "segment/dropQueue/count", queuePeon.getSegmentsToDrop().size()
           )
       );
     }
@@ -222,8 +242,8 @@ public class DruidCoordinatorLogger implements DruidCoordinatorHelper
       Long size = entry.getValue();
       emitter.emit(
           new ServiceMetricEvent.Builder()
-              .setUser1(dataSource).build(
-              "coordinator/segment/size", size
+              .setDimension(DruidMetrics.DATASOURCE, dataSource).build(
+              "segment/size", size
           )
       );
     }
@@ -232,8 +252,8 @@ public class DruidCoordinatorLogger implements DruidCoordinatorHelper
       Long count = entry.getValue();
       emitter.emit(
           new ServiceMetricEvent.Builder()
-              .setUser1(dataSource).build(
-              "coordinator/segment/count", count
+              .setDimension(DruidMetrics.DATASOURCE, dataSource).build(
+              "segment/count", count
           )
       );
     }

@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.query.metadata.metadata;
@@ -20,18 +22,21 @@ package io.druid.query.metadata.metadata;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.Objects;
+
 /**
-*/
+ */
 public class ColumnAnalysis
 {
   private static final String ERROR_PREFIX = "error:";
 
   public static ColumnAnalysis error(String reason)
   {
-    return new ColumnAnalysis("STRING", -1, null, ERROR_PREFIX + reason);
+    return new ColumnAnalysis("STRING", false, -1, null, ERROR_PREFIX + reason);
   }
 
   private final String type;
+  private final boolean hasMultipleValues;
   private final long size;
   private final Integer cardinality;
   private final String errorMessage;
@@ -39,12 +44,14 @@ public class ColumnAnalysis
   @JsonCreator
   public ColumnAnalysis(
       @JsonProperty("type") String type,
+      @JsonProperty("hasMultipleValues") boolean hasMultipleValues,
       @JsonProperty("size") long size,
       @JsonProperty("cardinality") Integer cardinality,
       @JsonProperty("errorMessage") String errorMessage
   )
   {
     this.type = type;
+    this.hasMultipleValues = hasMultipleValues;
     this.size = size;
     this.cardinality = cardinality;
     this.errorMessage = errorMessage;
@@ -54,6 +61,12 @@ public class ColumnAnalysis
   public String getType()
   {
     return type;
+  }
+
+  @JsonProperty
+  public boolean isHasMultipleValues()
+  {
+    return hasMultipleValues;
   }
 
   @JsonProperty
@@ -85,6 +98,14 @@ public class ColumnAnalysis
       return this;
     }
 
+    if (isError() && rhs.isError()) {
+      return errorMessage.equals(rhs.getErrorMessage()) ? this : ColumnAnalysis.error("multiple_errors");
+    } else if (isError()) {
+      return this;
+    } else if (rhs.isError()) {
+      return rhs;
+    }
+
     if (!type.equals(rhs.getType())) {
       return ColumnAnalysis.error("cannot_merge_diff_types");
     }
@@ -92,15 +113,21 @@ public class ColumnAnalysis
     Integer cardinality = getCardinality();
     final Integer rhsCardinality = rhs.getCardinality();
     if (cardinality == null) {
+
       cardinality = rhsCardinality;
-    }
-    else {
+    } else {
       if (rhsCardinality != null) {
         cardinality = Math.max(cardinality, rhsCardinality);
       }
     }
 
-    return new ColumnAnalysis(type, size + rhs.getSize(), cardinality, null);
+    return new ColumnAnalysis(
+        type,
+        hasMultipleValues || rhs.isHasMultipleValues(),
+        size + rhs.getSize(),
+        cardinality,
+        null
+    );
   }
 
   @Override
@@ -108,9 +135,33 @@ public class ColumnAnalysis
   {
     return "ColumnAnalysis{" +
            "type='" + type + '\'' +
+           ", hasMultipleValues=" + hasMultipleValues +
            ", size=" + size +
            ", cardinality=" + cardinality +
            ", errorMessage='" + errorMessage + '\'' +
            '}';
+  }
+
+  @Override
+  public boolean equals(Object o)
+  {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    ColumnAnalysis that = (ColumnAnalysis) o;
+    return hasMultipleValues == that.hasMultipleValues &&
+           size == that.size &&
+           Objects.equals(type, that.type) &&
+           Objects.equals(cardinality, that.cardinality) &&
+           Objects.equals(errorMessage, that.errorMessage);
+  }
+
+  @Override
+  public int hashCode()
+  {
+    return Objects.hash(type, hasMultipleValues, size, cardinality, errorMessage);
   }
 }

@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.cli;
@@ -28,7 +30,7 @@ import com.google.inject.name.Names;
 import com.google.inject.servlet.GuiceFilter;
 import com.google.inject.util.Providers;
 import com.metamx.common.logger.Logger;
-import io.airlift.command.Command;
+import io.airlift.airline.Command;
 import io.druid.audit.AuditManager;
 import io.druid.client.indexing.IndexingServiceSelectorConfig;
 import io.druid.guice.IndexingServiceFirehoseModule;
@@ -59,8 +61,6 @@ import io.druid.indexing.overlord.TaskRunnerFactory;
 import io.druid.indexing.overlord.TaskStorage;
 import io.druid.indexing.overlord.TaskStorageQueryAdapter;
 import io.druid.indexing.overlord.autoscaling.ResourceManagementSchedulerConfig;
-import io.druid.indexing.overlord.autoscaling.ResourceManagementSchedulerFactory;
-import io.druid.indexing.overlord.autoscaling.ResourceManagementSchedulerFactoryImpl;
 import io.druid.indexing.overlord.autoscaling.ResourceManagementStrategy;
 import io.druid.indexing.overlord.autoscaling.SimpleResourceManagementConfig;
 import io.druid.indexing.overlord.autoscaling.SimpleResourceManagementStrategy;
@@ -139,9 +139,6 @@ public class CliOverlord extends ServerRunnable
             binder.bind(TaskActionToolbox.class).in(LazySingleton.class);
             binder.bind(TaskLockbox.class).in(LazySingleton.class);
             binder.bind(TaskStorageQueryAdapter.class).in(LazySingleton.class);
-            binder.bind(ResourceManagementSchedulerFactory.class)
-                  .to(ResourceManagementSchedulerFactoryImpl.class)
-                  .in(LazySingleton.class);
 
             binder.bind(ChatHandlerProvider.class).toProvider(Providers.<ChatHandlerProvider>of(null));
 
@@ -229,6 +226,9 @@ public class CliOverlord extends ServerRunnable
     public void initialize(Server server, Injector injector)
     {
       final ServletContextHandler root = new ServletContextHandler(ServletContextHandler.SESSIONS);
+      root.setInitParameter("org.eclipse.jetty.servlet.Default.dirAllowed", "false");
+      root.setInitParameter("org.eclipse.jetty.servlet.Default.redirectWelcome", "true");
+      root.setWelcomeFiles(new String[]{"index.html", "console.html"});
 
       ServletHolder holderPwd = new ServletHolder("default", DefaultServlet.class);
 
@@ -254,7 +254,7 @@ public class CliOverlord extends ServerRunnable
       root.addFilter(GuiceFilter.class, "/druid/*", null);
 
       HandlerList handlerList = new HandlerList();
-      handlerList.setHandlers(new Handler[]{root});
+      handlerList.setHandlers(new Handler[]{JettyServerInitUtils.getJettyRequestLogHandler(), root});
 
       server.setHandler(handlerList);
     }

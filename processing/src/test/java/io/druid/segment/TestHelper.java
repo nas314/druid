@@ -1,27 +1,32 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.segment;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
 import com.metamx.common.guava.Sequence;
 import com.metamx.common.guava.Sequences;
 import io.druid.data.input.Row;
+import io.druid.jackson.DefaultObjectMapper;
 import io.druid.query.Result;
+import io.druid.segment.column.ColumnConfig;
 import org.junit.Assert;
 
 import java.util.Iterator;
@@ -30,6 +35,57 @@ import java.util.Iterator;
  */
 public class TestHelper
 {
+  private static final IndexMerger INDEX_MERGER;
+  private static final IndexMergerV9 INDEX_MERGER_V9;
+  private static final IndexIO INDEX_IO;
+  public static final ObjectMapper JSON_MAPPER;
+
+  static {
+    JSON_MAPPER = new DefaultObjectMapper();
+    INDEX_IO = new IndexIO(
+        JSON_MAPPER,
+        new ColumnConfig()
+        {
+          @Override
+          public int columnCacheSizeBytes()
+          {
+            return 0;
+          }
+        }
+    );
+    INDEX_MERGER = new IndexMerger(JSON_MAPPER, INDEX_IO);
+    INDEX_MERGER_V9 = new IndexMergerV9(JSON_MAPPER, INDEX_IO);
+  }
+
+  public static ObjectMapper getTestObjectMapper()
+  {
+    return JSON_MAPPER;
+  }
+
+
+  public static IndexMerger getTestIndexMerger()
+  {
+    return INDEX_MERGER;
+  }
+
+  public static IndexMergerV9 getTestIndexMergerV9()
+  {
+    return INDEX_MERGER_V9;
+  }
+
+  public static IndexIO getTestIndexIO()
+  {
+    return INDEX_IO;
+  }
+
+  public static ObjectMapper getObjectMapper() {
+    return JSON_MAPPER;
+  }
+
+  public static <T> Iterable<T> revert(Iterable<T> input) {
+    return Lists.reverse(Lists.newArrayList(input));
+  }
+
   public static <T> void assertExpectedResults(Iterable<Result<T>> expectedResults, Sequence<Result<T>> results)
   {
     assertResults(expectedResults, Sequences.toList(results, Lists.<Result<T>>newArrayList()), "");
@@ -111,17 +167,19 @@ public class TestHelper
     }
   }
 
-  private static <T> void assertObjects(Iterable<T> expectedResults, Iterable<T> actualResults, String failMsg)
+  private static <T> void assertObjects(Iterable<T> expectedResults, Iterable<T> actualResults, String msg)
   {
     Iterator resultsIter = actualResults.iterator();
     Iterator resultsIter2 = actualResults.iterator();
     Iterator expectedResultsIter = expectedResults.iterator();
 
+    int index = 0;
     while (resultsIter.hasNext() && resultsIter2.hasNext() && expectedResultsIter.hasNext()) {
       Object expectedNext = expectedResultsIter.next();
       final Object next = resultsIter.next();
       final Object next2 = resultsIter2.next();
 
+      String failMsg = msg + "-" + index++;
       Assert.assertEquals(failMsg, expectedNext, next);
       Assert.assertEquals(
           String.format("%s: Second iterator bad, multiple calls to iterator() should be safe", failMsg),
@@ -132,13 +190,13 @@ public class TestHelper
 
     if (resultsIter.hasNext()) {
       Assert.fail(
-          String.format("%s: Expected resultsIter to be exhausted, next element was %s", failMsg, resultsIter.next())
+          String.format("%s: Expected resultsIter to be exhausted, next element was %s", msg, resultsIter.next())
       );
     }
 
     if (resultsIter2.hasNext()) {
       Assert.fail(
-          String.format("%s: Expected resultsIter2 to be exhausted, next element was %s", failMsg, resultsIter.next())
+          String.format("%s: Expected resultsIter2 to be exhausted, next element was %s", msg, resultsIter.next())
       );
     }
 
@@ -146,7 +204,7 @@ public class TestHelper
       Assert.fail(
           String.format(
               "%s: Expected expectedResultsIter to be exhausted, next element was %s",
-              failMsg,
+              msg,
               expectedResultsIter.next()
           )
       );

@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.indexing.overlord;
@@ -42,7 +44,9 @@ import io.druid.indexing.common.actions.TaskActionClientFactory;
 import io.druid.indexing.common.task.Task;
 import io.druid.indexing.overlord.config.TaskQueueConfig;
 import io.druid.metadata.EntryExistsException;
+import io.druid.query.DruidMetrics;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -55,11 +59,11 @@ import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Interface between task producers and the task runner.
- * 
+ * <p/>
  * This object accepts tasks from producers using {@link #add} and manages delivery of these tasks to a
  * {@link TaskRunner}. Tasks will run in a mostly-FIFO order, with deviations when the natural next task is not ready
  * in time (based on its {@link Task#isReady} method).
- * 
+ * <p/>
  * For persistence, we save all new tasks and task status changes using a {@link TaskStorage} object.
  */
 public class TaskQueue
@@ -74,7 +78,7 @@ public class TaskQueue
   private final TaskLockbox taskLockbox;
   private final ServiceEmitter emitter;
 
-  private final ReentrantLock giant = new ReentrantLock();
+  private final ReentrantLock giant = new ReentrantLock(true);
   private final Condition managementMayBeNecessary = giant.newCondition();
   private final ExecutorService managerExec = Executors.newSingleThreadExecutor(
       new ThreadFactoryBuilder()
@@ -203,6 +207,11 @@ public class TaskQueue
     }
   }
 
+  public boolean isActive()
+  {
+    return active;
+  }
+
   /**
    * Main task runner management loop. Meant to run forever, or, at least until we're stopped.
    */
@@ -210,6 +219,9 @@ public class TaskQueue
   {
     log.info("Beginning management in %s.", config.getStartDelay());
     Thread.sleep(config.getStartDelay().getMillis());
+
+    // Ignore return value- we'll get the IDs and futures from getKnownTasks later.
+    taskRunner.restore();
 
     while (active) {
       giant.lock();
@@ -270,7 +282,8 @@ public class TaskQueue
           for (final String taskId : tasksToKill) {
             try {
               taskRunner.shutdown(taskId);
-            } catch (Exception e) {
+            }
+            catch (Exception e) {
               log.warn(e, "TaskRunner failed to clean up task: %s", taskId);
             }
           }
@@ -291,6 +304,7 @@ public class TaskQueue
    * @param task task to add
    *
    * @return true
+   *
    * @throws io.druid.metadata.EntryExistsException if the task already exists
    */
   public boolean add(final Task task) throws EntryExistsException
@@ -305,7 +319,7 @@ public class TaskQueue
       // If this throws with any sort of exception, including TaskExistsException, we don't want to
       // insert the task into our queue. So don't catch it.
       taskStorage.insert(task, TaskStatus.running(task.getId()));
-      tasks.add(task);
+      addTaskInternal(task);
       managementMayBeNecessary.signalAll();
       return true;
     }
@@ -314,8 +328,21 @@ public class TaskQueue
     }
   }
 
+  // Should always be called after taking giantLock
+  private void addTaskInternal(final Task task){
+    tasks.add(task);
+    taskLockbox.add(task);
+  }
+
+  // Should always be called after taking giantLock
+  private void removeTaskInternal(final Task task){
+    taskLockbox.remove(task);
+    tasks.remove(task);
+  }
+
   /**
    * Shuts down a task if it has not yet finished.
+   *
    * @param taskId task to kill
    */
   public void shutdown(final String taskId)
@@ -330,7 +357,8 @@ public class TaskQueue
           break;
         }
       }
-    } finally {
+    }
+    finally {
       giant.unlock();
     }
   }
@@ -364,15 +392,16 @@ public class TaskQueue
       // Inform taskRunner that this task can be shut down
       try {
         taskRunner.shutdown(task.getId());
-      } catch (Exception e) {
+      }
+      catch (Exception e) {
         log.warn(e, "TaskRunner failed to cleanup task after completion: %s", task.getId());
       }
       // Remove from running tasks
       int removed = 0;
-      for (int i = tasks.size() - 1 ; i >= 0 ; i--) {
+      for (int i = tasks.size() - 1; i >= 0; i--) {
         if (tasks.get(i).getId().equals(task.getId())) {
-          removed ++;
-          tasks.remove(i);
+          removed++;
+          removeTaskInternal(tasks.get(i));
           break;
         }
       }
@@ -391,7 +420,6 @@ public class TaskQueue
             log.makeAlert("Ignoring notification for already-complete task").addData("task", task.getId()).emit();
           } else {
             taskStorage.setStatus(taskStatus);
-            taskLockbox.unlock(task);
             log.info("Task done: %s", task);
             managementMayBeNecessary.signalAll();
           }
@@ -420,8 +448,9 @@ public class TaskQueue
   private ListenableFuture<TaskStatus> attachCallbacks(final Task task, final ListenableFuture<TaskStatus> statusFuture)
   {
     final ServiceMetricEvent.Builder metricBuilder = new ServiceMetricEvent.Builder()
-        .setUser2(task.getDataSource())
-        .setUser4(task.getType());
+        .setDimension("dataSource", task.getDataSource())
+        .setDimension("taskType", task.getType());
+
     Futures.addCallback(
         statusFuture,
         new FutureCallback<TaskStatus>()
@@ -458,8 +487,8 @@ public class TaskQueue
 
               // Emit event and log, if the task is done
               if (status.isComplete()) {
-                metricBuilder.setUser3(status.getStatusCode().toString());
-                emitter.emit(metricBuilder.build("indexer/time/run/millis", status.getDuration()));
+                metricBuilder.setDimension(DruidMetrics.TASK_STATUS, status.getStatusCode().toString());
+                emitter.emit(metricBuilder.build("task/run/time", status.getDuration()));
 
                 log.info(
                     "Task %s: %s (%d run duration)",
@@ -491,15 +520,35 @@ public class TaskQueue
 
     try {
       if (active) {
-        final List<Task> newTasks = taskStorage.getActiveTasks();
+        final Map<String,Task> newTasks = toTaskIDMap(taskStorage.getActiveTasks());
+        final int tasksSynced = newTasks.size();
+        final Map<String,Task> oldTasks = toTaskIDMap(tasks);
+
+        // Calculate differences on IDs instead of Task Objects.
+        Set<String> commonIds = Sets.newHashSet(Sets.intersection(newTasks.keySet(), oldTasks.keySet()));
+        for(String taskID : commonIds){
+          newTasks.remove(taskID);
+          oldTasks.remove(taskID);
+        }
+        Collection<Task> addedTasks = newTasks.values();
+        Collection<Task> removedTasks = oldTasks.values();
+
+        // Clean up removed Tasks
+        for(Task task : removedTasks){
+          removeTaskInternal(task);
+        }
+
+        // Add newly Added tasks to the queue
+        for(Task task : addedTasks){
+          addTaskInternal(task);
+        }
+
         log.info(
-            "Synced %,d tasks from storage (%,d tasks added, %,d tasks removed).",
-            newTasks.size(),
-            Sets.difference(Sets.newHashSet(newTasks), Sets.newHashSet(tasks)).size(),
-            Sets.difference(Sets.newHashSet(tasks), Sets.newHashSet(newTasks)).size()
+            "Synced %d tasks from storage (%d tasks added, %d tasks removed).",
+            tasksSynced,
+            addedTasks.size(),
+            removedTasks.size()
         );
-        tasks.clear();
-        tasks.addAll(newTasks);
         managementMayBeNecessary.signalAll();
       } else {
         log.info("Not active. Skipping storage sync.");
@@ -513,4 +562,13 @@ public class TaskQueue
       giant.unlock();
     }
   }
+
+  private static Map<String,Task> toTaskIDMap(List<Task> taskList){
+    Map<String,Task> rv = Maps.newHashMap();
+    for(Task task : taskList){
+      rv.put(task.getId(), task);
+    }
+    return rv;
+  }
+
 }

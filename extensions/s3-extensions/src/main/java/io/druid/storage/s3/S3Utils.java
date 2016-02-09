@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.storage.s3;
@@ -51,30 +53,38 @@ public class S3Utils
     }
   }
 
+  public static boolean isServiceExceptionRecoverable(ServiceException ex)
+  {
+    final boolean isIOException = ex.getCause() instanceof IOException;
+    final boolean isTimeout = "RequestTimeout".equals(((ServiceException) ex).getErrorCode());
+    return isIOException || isTimeout;
+  }
+
+  public static final Predicate<Throwable> S3RETRY = new Predicate<Throwable>()
+  {
+    @Override
+    public boolean apply(Throwable e)
+    {
+      if (e == null) {
+        return false;
+      } else if (e instanceof IOException) {
+        return true;
+      } else if (e instanceof ServiceException) {
+        return isServiceExceptionRecoverable((ServiceException) e);
+      } else {
+        return apply(e.getCause());
+      }
+    }
+  };
+
   /**
    * Retries S3 operations that fail due to io-related exceptions. Service-level exceptions (access denied, file not
    * found, etc) are not retried.
    */
   public static <T> T retryS3Operation(Callable<T> f) throws Exception
   {
-    final Predicate<Throwable> shouldRetry = new Predicate<Throwable>()
-    {
-      @Override
-      public boolean apply(Throwable e)
-      {
-        if (e instanceof IOException) {
-          return true;
-        } else if (e instanceof ServiceException) {
-          final boolean isIOException = e.getCause() instanceof IOException;
-          final boolean isTimeout = "RequestTimeout".equals(((ServiceException) e).getErrorCode());
-          return isIOException || isTimeout;
-        } else {
-          return false;
-        }
-      }
-    };
     final int maxTries = 10;
-    return RetryUtils.retry(f, shouldRetry, maxTries);
+    return RetryUtils.retry(f, S3RETRY, maxTries);
   }
 
   public static boolean isObjectInBucket(RestS3Service s3Client, String bucketName, String objectKey)

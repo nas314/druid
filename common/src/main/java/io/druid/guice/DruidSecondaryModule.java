@@ -1,26 +1,26 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.guice;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.introspect.AnnotationIntrospectorPair;
-import com.fasterxml.jackson.databind.introspect.GuiceAnnotationIntrospector;
-import com.fasterxml.jackson.databind.introspect.GuiceInjectableValues;
 import com.google.inject.Binder;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
@@ -43,7 +43,6 @@ public class DruidSecondaryModule implements Module
   private final ObjectMapper jsonMapper;
   private final ObjectMapper smileMapper;
   private final Validator validator;
-  private final JsonConfigurator jsonConfigurator;
 
   @Inject
   public DruidSecondaryModule(
@@ -51,8 +50,7 @@ public class DruidSecondaryModule implements Module
       ConfigurationObjectFactory factory,
       @Json ObjectMapper jsonMapper,
       @Smile ObjectMapper smileMapper,
-      Validator validator,
-      JsonConfigurator jsonConfigurator
+      Validator validator
   )
   {
     this.properties = properties;
@@ -60,7 +58,6 @@ public class DruidSecondaryModule implements Module
     this.jsonMapper = jsonMapper;
     this.smileMapper = smileMapper;
     this.validator = validator;
-    this.jsonConfigurator = jsonConfigurator;
   }
 
   @Override
@@ -69,10 +66,9 @@ public class DruidSecondaryModule implements Module
     binder.install(new DruidGuiceExtensions());
     binder.bind(Properties.class).toInstance(properties);
     binder.bind(ConfigurationObjectFactory.class).toInstance(factory);
-    // make objectMapper eager to ensure jackson gets setup with guice injection for JsonConfigurator
-    binder.bind(ObjectMapper.class).to(Key.get(ObjectMapper.class, Json.class)).asEagerSingleton();
+    binder.bind(ObjectMapper.class).to(Key.get(ObjectMapper.class, Json.class));
     binder.bind(Validator.class).toInstance(validator);
-    binder.bind(JsonConfigurator.class).toInstance(jsonConfigurator);
+    binder.bind(JsonConfigurator.class);
   }
 
   @Provides @LazySingleton @Json

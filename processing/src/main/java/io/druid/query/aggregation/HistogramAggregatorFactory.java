@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.query.aggregation;
@@ -32,7 +34,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 
-public class HistogramAggregatorFactory implements AggregatorFactory
+public class HistogramAggregatorFactory extends AggregatorFactory
 {
   private static final byte CACHE_TYPE_ID = 0x7;
 
@@ -153,13 +155,20 @@ public class HistogramAggregatorFactory implements AggregatorFactory
   public byte[] getCacheKey()
   {
     byte[] fieldNameBytes = StringUtils.toUtf8(fieldName);
-    return ByteBuffer.allocate(1 + fieldNameBytes.length).put(CACHE_TYPE_ID).put(fieldNameBytes).array();
+    ByteBuffer buf = ByteBuffer
+        .allocate(1 + fieldNameBytes.length + Floats.BYTES * breaks.length)
+        .put(CACHE_TYPE_ID)
+        .put(fieldNameBytes)
+        .put((byte)0xFF);
+    buf.asFloatBuffer().put(breaks);
+
+    return buf.array();
   }
 
   @Override
   public String getTypeName()
   {
-    throw new UnsupportedOperationException("HistogramAggregatorFactory does not support getTypeName()");
+    return "histogram";
   }
 
   @Override

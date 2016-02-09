@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.indexing.overlord.http;
@@ -29,6 +31,7 @@ import com.google.common.io.ByteSource;
 import com.google.common.util.concurrent.SettableFuture;
 import com.google.inject.Inject;
 import com.metamx.common.logger.Logger;
+
 import io.druid.audit.AuditInfo;
 import io.druid.audit.AuditManager;
 import io.druid.common.config.JacksonConfigManager;
@@ -36,16 +39,18 @@ import io.druid.indexing.common.TaskStatus;
 import io.druid.indexing.common.actions.TaskActionClient;
 import io.druid.indexing.common.actions.TaskActionHolder;
 import io.druid.indexing.common.task.Task;
+import io.druid.indexing.overlord.RemoteTaskRunner;
 import io.druid.indexing.overlord.TaskMaster;
 import io.druid.indexing.overlord.TaskQueue;
 import io.druid.indexing.overlord.TaskRunner;
 import io.druid.indexing.overlord.TaskRunnerWorkItem;
 import io.druid.indexing.overlord.TaskStorageQueryAdapter;
-import io.druid.indexing.overlord.autoscaling.ResourceManagementScheduler;
+import io.druid.indexing.overlord.autoscaling.ScalingStats;
 import io.druid.indexing.overlord.setup.WorkerBehaviorConfig;
 import io.druid.metadata.EntryExistsException;
 import io.druid.tasklogs.TaskLogStreamer;
 import io.druid.timeline.DataSegment;
+
 import org.joda.time.DateTime;
 import org.joda.time.Interval;
 
@@ -62,6 +67,8 @@ import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import javax.ws.rs.core.Response.Status;
+
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
@@ -219,10 +226,28 @@ public class OverlordResource
   @Path("/worker/history")
   @Produces(MediaType.APPLICATION_JSON)
   public Response getWorkerConfigHistory(
-      @QueryParam("interval") final String interval
+      @QueryParam("interval") final String interval,
+      @QueryParam("count") final Integer count
   )
   {
     Interval theInterval = interval == null ? null : new Interval(interval);
+    if (theInterval == null && count != null) {
+      try {
+        return Response.ok(
+            auditManager.fetchAuditHistory(
+                WorkerBehaviorConfig.CONFIG_KEY,
+                WorkerBehaviorConfig.CONFIG_KEY,
+                count
+            )
+        )
+                       .build();
+      }
+      catch (IllegalArgumentException e) {
+        return Response.status(Response.Status.BAD_REQUEST)
+                       .entity(ImmutableMap.<String, Object>of("error", e.getMessage()))
+                       .build();
+      }
+    }
     return Response.ok(
         auditManager.fetchAuditHistory(
             WorkerBehaviorConfig.CONFIG_KEY,
@@ -385,7 +410,18 @@ public class OverlordResource
           @Override
           public Response apply(TaskRunner taskRunner)
           {
-            return Response.ok(taskRunner.getWorkers()).build();
+            if (taskRunner instanceof RemoteTaskRunner) {
+              return Response.ok(((RemoteTaskRunner) taskRunner).getWorkers()).build();
+            } else {
+              log.debug(
+                  "Task runner [%s] of type [%s] does not support listing workers",
+                  taskRunner,
+                  taskRunner.getClass().getCanonicalName()
+              );
+              return Response.serverError()
+                             .entity(ImmutableMap.of("error", "Task Runner does not support worker listing"))
+                             .build();
+            }
           }
         }
     );
@@ -397,9 +433,9 @@ public class OverlordResource
   public Response getScalingState()
   {
     // Don't use asLeaderWith, since we want to return 200 instead of 503 when missing an autoscaler.
-    final Optional<ResourceManagementScheduler> rms = taskMaster.getResourceManagementScheduler();
+    final Optional<ScalingStats> rms = taskMaster.getScalingStats();
     if (rms.isPresent()) {
-      return Response.ok(rms.get().getStats()).build();
+      return Response.ok(rms.get()).build();
     } else {
       return Response.ok().build();
     }
@@ -539,6 +575,9 @@ public class OverlordResource
       }
       if (status.isPresent()) {
         data.put("statusCode", status.get().getStatusCode().toString());
+        if (status.get().isComplete()) {
+          data.put("duration", status.get().getDuration());
+        }
       }
       return data;
     }

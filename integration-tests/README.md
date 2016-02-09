@@ -1,48 +1,73 @@
 Integration Testing
-=========================
+===================
 
-## Installing Docker and Running
+## Installing Docker
 
-Please refer to instructions at [https://github.com/druid-io/docker-druid/blob/master/docker-install.md](https://github.com/druid-io/docker-druid/blob/master/docker-install.md)
+Please refer to instructions at [https://github.com/druid-io/docker-druid/blob/master/docker-install.md]()
 
-Instead of running
-```
-boot2docker init
-```
+## Creating the Docker VM
 
-run instead
-```
-boot2docker init -m 6000
-```
-
-Make sure that you have at least 6GB of memory available before you run the tests.
-
-Set the docker ip via:
-```
-export DOCKER_IP=$(boot2docker ip 2>/dev/null)
-```
-
-Verify that docker is running by issuing the following command:
+Create a new VM for integration tests with at least 6GB of memory.
 
 ```
-docker info
+docker-machine create --driver virtualbox --virtualbox-memory 6000 integration
+```
+
+Set the docker environment:
+
+```
+eval "$(docker-machine env integration)"
+export DOCKER_IP=$(docker-machine ip integration)
 ```
 
 Running Integration tests
 =========================
 
-## Running tests using mvn
+Make sure that you have at least 6GB of memory available before you run the tests.
+
+## Starting docker tests
+
+To run all the tests using docker and mvn run the following command -
+```
+  mvn verify -P integration-tests
+```
+
+To run only a single test using mvn run the following command -
+```
+  mvn verify -P integration-tests -Dit.test=<test_name>
+```
+
+## Configure and run integration tests using existing cluster
+
+To run tests on any druid cluster that is already running, create a configuration file:
+
+    {   
+       "broker_host": "<broker_ip>",
+       "broker_port": "<broker_port>",
+       "router_host": "<router_ip>",
+       "router_port": "<router_port>",
+       "indexer_host": "<indexer_ip>",
+       "indexer_port": "<indexer_port>",
+       "coordinator_host": "<coordinator_ip>",
+       "coordinator_port": "<coordinator_port>",
+       "middle_manager_host": "<middle_manager_ip>",
+       "zookeeper_hosts": "<comma-separated list of zookeeper_ip:zookeeper_port>",
+    }
+
+Set the environment variable CONFIG_FILE to the name of the configuration file -
+```
+export CONFIG_FILE=<config file name>
+```
 
 To run all the tests using mvn run the following command -
-'''''
-  mvn verify -P integration-tests
-'''''
+```
+  mvn verify -P int-tests-config-file
+```
 
-To run only a single test using mvn run following command -
-'''''
-  mvn verify -P integration-tests -Dit.test=<test_name>
-'''''
-
+To run only a single test using mvn run the following command -
+```
+  mvn verify -P int-tests-config-file -Dit.test=<test_name>
+```
 
 Writing a New Test
 ===============
@@ -66,9 +91,9 @@ A test can access different helper and utility classes provided by test-framewor
 To mark a test be able to use Guice Dependency Injection -
 Annotate the test class with the below annotation
 
- '''''''
+```
  @Guice(moduleFactory = DruidTestModuleFactory.class)
- '''''''
+```
 This will tell the test framework that the test class needs to be constructed using guice.
 
 ### Helper Classes provided

@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ~ Druid - a distributed column store.
+  ~ Copyright 2012 - 2015 Metamarkets Group Inc.
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~     http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <packaging>pom</packaging>
+
+    <artifactId>distribution</artifactId>
+    <name>distribution</name>
+    <description>distribution</description>
+
+    <parent>
+        <artifactId>druid</artifactId>
+        <groupId>io.druid</groupId>
+        <version>0.9.0-SNAPSHOT</version>
+    </parent>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.druid</groupId>
+            <artifactId>druid-services</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <phase>install</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>java</executable>
+                            <arguments>
+                                <argument>-classpath</argument>
+                                <classpath/>
+                                <argument>-Ddruid.extensions.loadList=[]</argument>
+                                <argument>-Ddruid.extensions.directory=${project.build.directory}/extensions</argument>
+                                <argument>-Ddruid.extensions.hadoopDependenciesDir=${project.build.directory}/hadoop-dependencies</argument>
+                                <argument>io.druid.cli.Main</argument>
+                                <argument>tools</argument>
+                                <argument>pull-deps</argument>
+                                <argument>--clean</argument>
+                                <argument>--defaultVersion</argument>
+                                <argument>${project.parent.version}</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-examples</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-azure-extensions</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-cassandra-storage</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-datasketches</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-hdfs-storage</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-histogram</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-kafka-eight</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-kafka-eight-simple-consumer</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-kafka-extraction-namespace</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:mysql-metadata-storage</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-namespace-lookup</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:postgresql-metadata-storage</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-rabbitmq</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-s3-extensions</argument>
+                                <argument>-c</argument>
+                                <argument>io.druid.extensions:druid-cloudfiles-extensions</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>distro-assembly</id>
+                        <phase>install</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <finalName>${project.parent.artifactId}-${project.parent.version}</finalName>
+                            <tarLongFileMode>posix</tarLongFileMode>
+                            <descriptors>
+                                <descriptor>src/assembly/assembly.xml</descriptor>
+                            </descriptors>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>mysql-distro-assembly</id>
+                        <phase>install</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <finalName>mysql-metadata-storage</finalName>
+                            <tarLongFileMode>posix</tarLongFileMode>
+                            <descriptors>
+                                <descriptor>src/assembly/mysql_assembly.xml</descriptor>
+                            </descriptors>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>license-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>download-licenses</id>
+                        <goals>
+                            <goal>download-licenses</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.indexing.overlord.autoscaling;
@@ -22,29 +24,38 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Predicate;
 import com.google.common.base.Supplier;
 import com.google.common.collect.Collections2;
-import com.google.common.collect.FluentIterable;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.inject.Inject;
 import com.metamx.common.ISE;
+import com.metamx.common.concurrent.ScheduledExecutorFactory;
+import com.metamx.common.concurrent.ScheduledExecutors;
 import com.metamx.emitter.EmittingLogger;
-import io.druid.indexing.overlord.RemoteTaskRunnerWorkItem;
+import io.druid.granularity.PeriodGranularity;
+import io.druid.indexing.overlord.RemoteTaskRunner;
 import io.druid.indexing.overlord.TaskRunnerWorkItem;
 import io.druid.indexing.overlord.ZkWorker;
 import io.druid.indexing.overlord.setup.WorkerBehaviorConfig;
 import org.joda.time.DateTime;
 import org.joda.time.Duration;
+import org.joda.time.Period;
 
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ScheduledExecutorService;
 
 /**
  */
-public class SimpleResourceManagementStrategy implements ResourceManagementStrategy
+public class SimpleResourceManagementStrategy implements ResourceManagementStrategy<RemoteTaskRunner>
 {
   private static final EmittingLogger log = new EmittingLogger(SimpleResourceManagementStrategy.class);
+
+  private final ResourceManagementSchedulerConfig resourceManagementSchedulerConfig;
+  private final ScheduledExecutorService exec;
+
+  private volatile boolean started = false;
 
   private final SimpleResourceManagementConfig config;
   private final Supplier<WorkerBehaviorConfig> workerConfigRef;
@@ -61,17 +72,37 @@ public class SimpleResourceManagementStrategy implements ResourceManagementStrat
   @Inject
   public SimpleResourceManagementStrategy(
       SimpleResourceManagementConfig config,
-      Supplier<WorkerBehaviorConfig> workerConfigRef
+      Supplier<WorkerBehaviorConfig> workerConfigRef,
+      ResourceManagementSchedulerConfig resourceManagementSchedulerConfig,
+      ScheduledExecutorFactory factory
+  )
+  {
+    this(
+        config,
+        workerConfigRef,
+        resourceManagementSchedulerConfig,
+        factory.create(1, "SimpleResourceManagement-manager--%d")
+    );
+  }
+
+  public SimpleResourceManagementStrategy(
+      SimpleResourceManagementConfig config,
+      Supplier<WorkerBehaviorConfig> workerConfigRef,
+      ResourceManagementSchedulerConfig resourceManagementSchedulerConfig,
+      ScheduledExecutorService exec
   )
   {
     this.config = config;
     this.workerConfigRef = workerConfigRef;
     this.scalingStats = new ScalingStats(config.getNumEventsToTrack());
+    this.resourceManagementSchedulerConfig = resourceManagementSchedulerConfig;
+    this.exec = exec;
   }
 
-  @Override
-  public boolean doProvision(Collection<RemoteTaskRunnerWorkItem> pendingTasks, Collection<ZkWorker> zkWorkers)
+  boolean doProvision(RemoteTaskRunner runner)
   {
+    Collection<? extends TaskRunnerWorkItem> pendingTasks = runner.getPendingTasks();
+    Collection<ZkWorker> zkWorkers = getWorkers(runner);
     synchronized (lock) {
       boolean didProvision = false;
       final WorkerBehaviorConfig workerConfig = workerConfigRef.get();
@@ -136,9 +167,9 @@ public class SimpleResourceManagementStrategy implements ResourceManagementStrat
     }
   }
 
-  @Override
-  public boolean doTerminate(Collection<RemoteTaskRunnerWorkItem> pendingTasks, Collection<ZkWorker> zkWorkers)
+  boolean doTerminate(RemoteTaskRunner runner)
   {
+    Collection<? extends TaskRunnerWorkItem> pendingTasks = runner.getPendingTasks();
     synchronized (lock) {
       final WorkerBehaviorConfig workerConfig = workerConfigRef.get();
       if (workerConfig == null) {
@@ -151,7 +182,7 @@ public class SimpleResourceManagementStrategy implements ResourceManagementStrat
           workerConfig.getAutoScaler().ipToIdLookup(
               Lists.newArrayList(
                   Iterables.transform(
-                      zkWorkers,
+                      runner.getLazyWorkers(),
                       new Function<ZkWorker, String>()
                       {
                         @Override
@@ -174,28 +205,26 @@ public class SimpleResourceManagementStrategy implements ResourceManagementStrat
       currentlyTerminating.clear();
       currentlyTerminating.addAll(stillExisting);
 
-      updateTargetWorkerCount(workerConfig, pendingTasks, zkWorkers);
+      Collection<ZkWorker> workers = getWorkers(runner);
+      updateTargetWorkerCount(workerConfig, pendingTasks, workers);
 
-      final Predicate<ZkWorker> isLazyWorker = createLazyWorkerPredicate(config);
       if (currentlyTerminating.isEmpty()) {
-        final int excessWorkers = (zkWorkers.size() + currentlyProvisioning.size()) - targetWorkerCount;
-        if (excessWorkers > 0) {
-          final List<String> laziestWorkerIps =
-              FluentIterable.from(zkWorkers)
-                            .filter(isLazyWorker)
-                            .limit(excessWorkers)
-                            .transform(
-                                new Function<ZkWorker, String>()
-                                {
-                                  @Override
-                                  public String apply(ZkWorker zkWorker)
-                                  {
-                                    return zkWorker.getWorker().getIp();
-                                  }
-                                }
-                            )
-                            .toList();
 
+        final int excessWorkers = (workers.size() + currentlyProvisioning.size()) - targetWorkerCount;
+        if (excessWorkers > 0) {
+          final Predicate<ZkWorker> isLazyWorker = createLazyWorkerPredicate(config);
+          final List<String> laziestWorkerIps =
+              Lists.transform(
+                  runner.markWorkersLazy(isLazyWorker, excessWorkers),
+                  new Function<ZkWorker, String>()
+                  {
+                    @Override
+                    public String apply(ZkWorker zkWorker)
+                    {
+                      return zkWorker.getWorker().getIp();
+                    }
+                  }
+              );
           if (laziestWorkerIps.isEmpty()) {
             log.info("Wanted to terminate %,d workers, but couldn't find any lazy ones!", excessWorkers);
           } else {
@@ -235,6 +264,70 @@ public class SimpleResourceManagementStrategy implements ResourceManagementStrat
   }
 
   @Override
+  public void startManagement(final RemoteTaskRunner runner)
+  {
+    synchronized (lock) {
+      if (started) {
+        return;
+      }
+
+      log.info("Started Resource Management Scheduler");
+
+      ScheduledExecutors.scheduleAtFixedRate(
+          exec,
+          resourceManagementSchedulerConfig.getProvisionPeriod().toStandardDuration(),
+          new Runnable()
+          {
+            @Override
+            public void run()
+            {
+              doProvision(runner);
+            }
+          }
+      );
+
+      // Schedule termination of worker nodes periodically
+      Period period = resourceManagementSchedulerConfig.getTerminatePeriod();
+      PeriodGranularity granularity = new PeriodGranularity(
+          period,
+          resourceManagementSchedulerConfig.getOriginTime(),
+          null
+      );
+      final long startTime = granularity.next(granularity.truncate(new DateTime().getMillis()));
+
+      ScheduledExecutors.scheduleAtFixedRate(
+          exec,
+          new Duration(System.currentTimeMillis(), startTime),
+          resourceManagementSchedulerConfig.getTerminatePeriod().toStandardDuration(),
+          new Runnable()
+          {
+            @Override
+            public void run()
+            {
+              doTerminate(runner);
+            }
+          }
+      );
+
+      started = true;
+
+    }
+  }
+
+  @Override
+  public void stopManagement()
+  {
+    synchronized (lock) {
+      if (!started) {
+        return;
+      }
+      log.info("Stopping Resource Management Scheduler");
+      exec.shutdown();
+      started = false;
+    }
+  }
+
+  @Override
   public ScalingStats getStats()
   {
     return scalingStats;
@@ -253,7 +346,7 @@ public class SimpleResourceManagementStrategy implements ResourceManagementStrat
       {
         final boolean itHasBeenAWhile = System.currentTimeMillis() - worker.getLastCompletedTaskTime().getMillis()
                                         >= config.getWorkerIdleTimeout().toStandardDuration().getMillis();
-        return worker.getRunningTasks().isEmpty() && (itHasBeenAWhile || !isValidWorker.apply(worker));
+        return itHasBeenAWhile || !isValidWorker.apply(worker);
       }
     };
   }
@@ -278,7 +371,7 @@ public class SimpleResourceManagementStrategy implements ResourceManagementStrat
 
   private void updateTargetWorkerCount(
       final WorkerBehaviorConfig workerConfig,
-      final Collection<RemoteTaskRunnerWorkItem> pendingTasks,
+      final Collection<? extends TaskRunnerWorkItem> pendingTasks,
       final Collection<ZkWorker> zkWorkers
   )
   {
@@ -355,7 +448,7 @@ public class SimpleResourceManagementStrategy implements ResourceManagementStrat
     }
   }
 
-  private boolean hasTaskPendingBeyondThreshold(Collection<RemoteTaskRunnerWorkItem> pendingTasks)
+  private boolean hasTaskPendingBeyondThreshold(Collection<? extends TaskRunnerWorkItem> pendingTasks)
   {
     synchronized (lock) {
       long now = System.currentTimeMillis();
@@ -368,5 +461,10 @@ public class SimpleResourceManagementStrategy implements ResourceManagementStrat
       }
       return false;
     }
+  }
+
+  public Collection<ZkWorker> getWorkers(RemoteTaskRunner runner)
+  {
+    return runner.getWorkers();
   }
 }

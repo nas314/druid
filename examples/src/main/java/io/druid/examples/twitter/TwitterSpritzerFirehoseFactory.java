@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.examples.twitter;
@@ -50,6 +52,8 @@ import java.util.TreeMap;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static java.lang.Thread.sleep;
 
@@ -82,6 +86,8 @@ import static java.lang.Thread.sleep;
 public class TwitterSpritzerFirehoseFactory implements FirehoseFactory<InputRowParser>
 {
   private static final Logger log = new Logger(TwitterSpritzerFirehoseFactory.class);
+  private static final Pattern sourcePattern = Pattern.compile("<a[^>]*>(.*?)</a>", Pattern.CASE_INSENSITIVE);
+
   /**
    * max events to receive, -1 is infinite, 0 means nothing is delivered; use this to prevent
    * infinite space consumption or to prevent getting throttled at an inconvenient time
@@ -278,6 +284,8 @@ public class TwitterSpritzerFirehoseFactory implements FirehoseFactory<InputRowP
           throw new RuntimeException("InterruptedException", e);
         }
 
+        theMap.clear();
+
         HashtagEntity[] hts = status.getHashtagEntities();
         String text = status.getText();
         theMap.put("text", (null == text) ? "" : text);
@@ -313,8 +321,24 @@ public class TwitterSpritzerFirehoseFactory implements FirehoseFactory<InputRowP
           theMap.put("lon", null);
         }
 
-        long retweetCount = status.getRetweetCount();
-        theMap.put("retweet_count", retweetCount);
+        if (status.getSource() != null) {
+          Matcher m = sourcePattern.matcher(status.getSource());
+          theMap.put("source", m.find() ? m.group(1) : status.getSource());
+        }
+
+        theMap.put("retweet", status.isRetweet());
+
+        if (status.isRetweet()) {
+          Status original = status.getRetweetedStatus();
+          theMap.put("retweet_count", original.getRetweetCount());
+
+          User originator = original.getUser();
+          theMap.put("originator_screen_name", originator != null ? originator.getScreenName() : "");
+          theMap.put("originator_follower_count", originator != null ? originator.getFollowersCount() : "");
+          theMap.put("originator_friends_count", originator != null ? originator.getFriendsCount() : "");
+          theMap.put("originator_verified", originator != null ? originator.isVerified() : "");
+        }
+
         User user = status.getUser();
         final boolean hasUser = (null != user);
         theMap.put("follower_count", hasUser ? user.getFollowersCount() : 0);
@@ -323,6 +347,9 @@ public class TwitterSpritzerFirehoseFactory implements FirehoseFactory<InputRowP
         theMap.put("utc_offset", hasUser ? user.getUtcOffset() : -1);  // resolution in seconds, -1 if not available?
         theMap.put("statuses_count", hasUser ? user.getStatusesCount() : 0);
         theMap.put("user_id", hasUser ? String.format("%d", user.getId()) : "");
+        theMap.put("screen_name", hasUser ? user.getScreenName() : "");
+        theMap.put("location", hasUser ? user.getLocation() : "");
+        theMap.put("verified", hasUser ? user.isVerified() : "");
 
         theMap.put("ts",status.getCreatedAt().getTime());
 

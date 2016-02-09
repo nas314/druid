@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.metadata.storage.mysql;
@@ -30,6 +32,7 @@ import org.apache.commons.dbcp2.BasicDataSource;
 import org.skife.jdbi.v2.DBI;
 import org.skife.jdbi.v2.Handle;
 import org.skife.jdbi.v2.tweak.HandleCallback;
+import org.skife.jdbi.v2.util.BooleanMapper;
 
 import java.sql.SQLException;
 
@@ -56,6 +59,8 @@ public class MySQLConnector extends SQLMetadataConnector
     datasource.setConnectionInitSqls(ImmutableList.of("SET sql_mode='ANSI_QUOTES'"));
 
     this.dbi = new DBI(datasource);
+
+    log.info("Configured MySQL as metadata storage");
   }
 
   @Override
@@ -75,16 +80,14 @@ public class MySQLConnector extends SQLMetadataConnector
   {
     // ensure database defaults to utf8, otherwise bail
     boolean isUtf8 = handle
-                .createQuery("SHOW VARIABLES where variable_name = 'character_set_database' and value = 'utf8'")
-                .list()
-                .size() == 1;
+                         .createQuery("SELECT @@character_set_database = 'utf8'")
+                         .map(BooleanMapper.FIRST)
+                         .first();
 
-    if(!isUtf8) {
+    if (!isUtf8) {
       throw new ISE(
           "Database default character set is not UTF-8." + System.lineSeparator()
           + "  Druid requires its MySQL database to be created using UTF-8 as default character set."
-          + " If you are upgrading from Druid 0.6.x, please make all tables have been converted to utf8 and change the database default."
-          + " For more information on how to convert and set the default, please refer to section on updating from 0.6.x in the Druid 0.7.0 release notes."
       );
     }
 
@@ -95,11 +98,10 @@ public class MySQLConnector extends SQLMetadataConnector
   }
 
   @Override
-  protected boolean isTransientException(Throwable e)
+  protected boolean connectorIsTransientException(Throwable e)
   {
     return e instanceof MySQLTransientException
-           || (e instanceof SQLException && ((SQLException) e).getErrorCode() == 1317)
-        ;
+           || (e instanceof SQLException && ((SQLException) e).getErrorCode() == 1317 /* ER_QUERY_INTERRUPTED */);
   }
 
   @Override

@@ -1,30 +1,37 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.segment.realtime.plumber;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.metamx.common.Granularity;
 import com.metamx.common.concurrent.ScheduledExecutors;
 import com.metamx.emitter.EmittingLogger;
 import com.metamx.emitter.service.ServiceEmitter;
+import io.druid.client.cache.Cache;
+import io.druid.client.cache.CacheConfig;
 import io.druid.common.guava.ThreadRenamingCallable;
+import io.druid.concurrent.Execs;
 import io.druid.query.QueryRunnerFactoryConglomerate;
+import io.druid.segment.IndexIO;
+import io.druid.segment.IndexMerger;
 import io.druid.segment.indexing.DataSchema;
 import io.druid.segment.indexing.RealtimeTuningConfig;
 import io.druid.segment.realtime.FireDepartmentMetrics;
@@ -36,7 +43,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
 /**
@@ -60,7 +66,13 @@ public class FlushingPlumber extends RealtimePlumber
       ServiceEmitter emitter,
       QueryRunnerFactoryConglomerate conglomerate,
       DataSegmentAnnouncer segmentAnnouncer,
-      ExecutorService queryExecutorService
+      ExecutorService queryExecutorService,
+      IndexMerger indexMerger,
+      IndexIO indexIO,
+      Cache cache,
+      CacheConfig cacheConfig,
+      ObjectMapper objectMapper
+
   )
   {
     super(
@@ -73,7 +85,12 @@ public class FlushingPlumber extends RealtimePlumber
         queryExecutorService,
         null,
         null,
-        null
+        null,
+        indexMerger,
+        indexIO,
+        cache,
+        cacheConfig,
+        objectMapper
     );
 
     this.flushDuration = flushDuration;
@@ -82,7 +99,7 @@ public class FlushingPlumber extends RealtimePlumber
   }
 
   @Override
-  public void startJob()
+  public Object startJob()
   {
     log.info("Starting job for %s", getSchema().getDataSource());
 
@@ -90,17 +107,12 @@ public class FlushingPlumber extends RealtimePlumber
     initializeExecutors();
 
     if (flushScheduledExec == null) {
-      flushScheduledExec = Executors.newScheduledThreadPool(
-          1,
-          new ThreadFactoryBuilder()
-              .setDaemon(true)
-              .setNameFormat("flushing_scheduled_%d")
-              .build()
-      );
+      flushScheduledExec = Execs.scheduledSingleThreaded("flushing_scheduled_%d");
     }
 
-    bootstrapSinksFromDisk();
+    Object retVal = bootstrapSinksFromDisk();
     startFlushThread();
+    return retVal;
   }
 
   protected void flushAfterDuration(final long truncatedTime, final Sink sink)

@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.server.coordinator;
@@ -55,8 +57,6 @@ public class LoadQueuePeon
   private static final int DROP = 0;
   private static final int LOAD = 1;
 
-  private static Comparator<DataSegment> segmentComparator = Comparators.inverse(DataSegment.bucketMonthComparator());
-
   private static void executeCallbacks(List<LoadPeonCallback> callbacks)
   {
     for (LoadPeonCallback callback : callbacks) {
@@ -77,15 +77,16 @@ public class LoadQueuePeon
   private final AtomicInteger failedAssignCount = new AtomicInteger(0);
 
   private final ConcurrentSkipListMap<DataSegment, SegmentHolder> segmentsToLoad = new ConcurrentSkipListMap<>(
-      segmentComparator
+      DruidCoordinator.SEGMENT_COMPARATOR
   );
   private final ConcurrentSkipListMap<DataSegment, SegmentHolder> segmentsToDrop = new ConcurrentSkipListMap<>(
-      segmentComparator
+      DruidCoordinator.SEGMENT_COMPARATOR
   );
 
   private final Object lock = new Object();
 
   private volatile SegmentHolder currentlyProcessing = null;
+  private boolean stopped = false;
 
   LoadQueuePeon(
       CuratorFramework curator,
@@ -209,9 +210,12 @@ public class LoadQueuePeon
               {
                 synchronized (lock) {
                   try {
+                    // expected when the coordinator looses leadership and LoadQueuePeon is stopped.
                     if (currentlyProcessing == null) {
-                      log.makeAlert("Crazy race condition! server[%s]", basePath)
-                         .emit();
+                      if(!stopped) {
+                        log.makeAlert("Crazy race condition! server[%s]", basePath)
+                           .emit();
+                      }
                       actionCompleted();
                       doNext();
                       return;
@@ -347,6 +351,7 @@ public class LoadQueuePeon
 
       queuedSize.set(0L);
       failedAssignCount.set(0);
+      stopped = true;
     }
   }
 

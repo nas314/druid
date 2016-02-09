@@ -1,18 +1,18 @@
 /*
  * Licensed to Metamarkets Group Inc. (Metamarkets) under one
- * or more contributor license agreements.  See the NOTICE file
+ * or more contributor license agreements. See the NOTICE file
  * distributed with this work for additional information
- * regarding copyright ownership.  Metamarkets licenses this file
+ * regarding copyright ownership. Metamarkets licenses this file
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * with the License. You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
+ * KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations
  * under the License.
  */
@@ -28,12 +28,13 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.net.URI;
 
 public class ServerDiscoverySelectorTest
 {
 
   private ServiceProvider serviceProvider;
-  private  ServerDiscoverySelector serverDiscoverySelector;
+  private ServerDiscoverySelector serverDiscoverySelector;
   private ServiceInstance instance;
   private static final int PORT = 8080;
   private static final String ADDRESS = "localhost";
@@ -52,14 +53,86 @@ public class ServerDiscoverySelectorTest
     EasyMock.expect(serviceProvider.getInstance()).andReturn(instance).anyTimes();
     EasyMock.expect(instance.getAddress()).andReturn(ADDRESS).anyTimes();
     EasyMock.expect(instance.getPort()).andReturn(PORT).anyTimes();
-    EasyMock.replay(instance,serviceProvider);
+    EasyMock.replay(instance, serviceProvider);
     Server server = serverDiscoverySelector.pick();
-    Assert.assertEquals(PORT,server.getPort());
-    Assert.assertEquals(ADDRESS,server.getAddress());
-    Assert.assertTrue(server.getHost().contains(new Integer(PORT).toString()));
+    Assert.assertEquals(PORT, server.getPort());
+    Assert.assertEquals(ADDRESS, server.getAddress());
+    Assert.assertTrue(server.getHost().contains(Integer.toString(PORT)));
     Assert.assertTrue(server.getHost().contains(ADDRESS));
-    Assert.assertEquals(new String("http"), server.getScheme());
-    EasyMock.verify(instance,serviceProvider);
+    Assert.assertEquals("http", server.getScheme());
+    EasyMock.verify(instance, serviceProvider);
+    final URI uri = new URI(
+        server.getScheme(),
+        null,
+        server.getAddress(),
+        server.getPort(),
+        "/druid/indexer/v1/action",
+        null,
+        null
+    );
+    Assert.assertEquals(PORT, uri.getPort());
+    Assert.assertEquals(ADDRESS, uri.getHost());
+    Assert.assertEquals("http", uri.getScheme());
+  }
+
+
+  @Test
+  public void testPickIPv6() throws Exception
+  {
+    final String ADDRESS = "2001:0db8:0000:0000:0000:ff00:0042:8329";
+    EasyMock.expect(serviceProvider.getInstance()).andReturn(instance).anyTimes();
+    EasyMock.expect(instance.getAddress()).andReturn(ADDRESS).anyTimes();
+    EasyMock.expect(instance.getPort()).andReturn(PORT).anyTimes();
+    EasyMock.replay(instance, serviceProvider);
+    Server server = serverDiscoverySelector.pick();
+    Assert.assertEquals(PORT, server.getPort());
+    Assert.assertEquals(ADDRESS, server.getAddress());
+    Assert.assertTrue(server.getHost().contains(Integer.toString(PORT)));
+    Assert.assertTrue(server.getHost().contains(ADDRESS));
+    Assert.assertEquals("http", server.getScheme());
+    EasyMock.verify(instance, serviceProvider);
+    final URI uri = new URI(
+        server.getScheme(),
+        null,
+        server.getAddress(),
+        server.getPort(),
+        "/druid/indexer/v1/action",
+        null,
+        null
+    );
+    Assert.assertEquals(PORT, uri.getPort());
+    Assert.assertEquals(String.format("[%s]", ADDRESS), uri.getHost());
+    Assert.assertEquals("http", uri.getScheme());
+  }
+
+
+  @Test
+  public void testPickIPv6Bracket() throws Exception
+  {
+    final String ADDRESS = "[2001:0db8:0000:0000:0000:ff00:0042:8329]";
+    EasyMock.expect(serviceProvider.getInstance()).andReturn(instance).anyTimes();
+    EasyMock.expect(instance.getAddress()).andReturn(ADDRESS).anyTimes();
+    EasyMock.expect(instance.getPort()).andReturn(PORT).anyTimes();
+    EasyMock.replay(instance, serviceProvider);
+    Server server = serverDiscoverySelector.pick();
+    Assert.assertEquals(PORT, server.getPort());
+    Assert.assertEquals(ADDRESS, server.getAddress());
+    Assert.assertTrue(server.getHost().contains(Integer.toString(PORT)));
+    Assert.assertTrue(server.getHost().contains(ADDRESS));
+    Assert.assertEquals("http", server.getScheme());
+    EasyMock.verify(instance, serviceProvider);
+    final URI uri = new URI(
+        server.getScheme(),
+        null,
+        server.getAddress(),
+        server.getPort(),
+        "/druid/indexer/v1/action",
+        null,
+        null
+    );
+    Assert.assertEquals(PORT, uri.getPort());
+    Assert.assertEquals(ADDRESS, uri.getHost());
+    Assert.assertEquals("http", uri.getScheme());
   }
 
   @Test

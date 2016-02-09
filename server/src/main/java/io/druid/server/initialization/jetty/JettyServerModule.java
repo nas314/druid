@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.server.initialization.jetty;
@@ -46,11 +48,11 @@ import io.druid.guice.annotations.Self;
 import io.druid.server.DruidNode;
 import io.druid.server.StatusResource;
 import io.druid.server.initialization.ServerConfig;
-
 import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
+import org.eclipse.jetty.util.thread.ScheduledExecutorScheduler;
 
 import javax.servlet.ServletException;
 import java.util.Map;
@@ -71,6 +73,8 @@ public class JettyServerModule extends JerseyServletModule
 
     binder.bind(GuiceContainer.class).to(DruidGuiceContainer.class);
     binder.bind(DruidGuiceContainer.class).in(Scopes.SINGLETON);
+    binder.bind(CustomExceptionMapper.class).in(Singleton.class);
+
     serve("/*").with(DruidGuiceContainer.class);
 
     Jerseys.addResource(binder, StatusResource.class);
@@ -108,16 +112,54 @@ public class JettyServerModule extends JerseyServletModule
   @LazySingleton
   public Server getServer(Injector injector, Lifecycle lifecycle, @Self DruidNode node, ServerConfig config)
   {
-    JettyServerInitializer initializer = injector.getInstance(JettyServerInitializer.class);
-
     final Server server = makeJettyServer(node, config);
+    initializeServer(injector, lifecycle, server);
+    return server;
+  }
+
+  @Provides
+  @Singleton
+  public JacksonJsonProvider getJacksonJsonProvider(@Json ObjectMapper objectMapper)
+  {
+    final JacksonJsonProvider provider = new JacksonJsonProvider();
+    provider.setMapper(objectMapper);
+    return provider;
+  }
+
+  static Server makeJettyServer(DruidNode node, ServerConfig config)
+  {
+    final QueuedThreadPool threadPool = new QueuedThreadPool();
+    threadPool.setMinThreads(config.getNumThreads());
+    threadPool.setMaxThreads(config.getNumThreads());
+    threadPool.setDaemon(true);
+
+    final Server server = new Server(threadPool);
+
+    // Without this bean set, the default ScheduledExecutorScheduler runs as non-daemon, causing lifecycle hooks to fail
+    // to fire on main exit. Related bug: https://github.com/druid-io/druid/pull/1627
+    server.addBean(new ScheduledExecutorScheduler("JettyScheduler", true), true);
+
+    ServerConnector connector = new ServerConnector(server);
+    connector.setPort(node.getPort());
+    connector.setIdleTimeout(Ints.checkedCast(config.getMaxIdleTime().toStandardDuration().getMillis()));
+    // workaround suggested in -
+    // https://bugs.eclipse.org/bugs/show_bug.cgi?id=435322#c66 for jetty half open connection issues during failovers
+    connector.setAcceptorPriorityDelta(-1);
+
+    server.setConnectors(new Connector[]{connector});
+
+    return server;
+  }
+
+  static void initializeServer(Injector injector, Lifecycle lifecycle, final Server server)
+  {
+    JettyServerInitializer initializer = injector.getInstance(JettyServerInitializer.class);
     try {
       initializer.initialize(server, injector);
     }
     catch (ConfigurationException e) {
       throw new ProvisionException(Iterables.getFirst(e.getErrorMessages(), null).getMessage());
     }
-
 
     lifecycle.addHandler(
         new Lifecycle.Handler()
@@ -140,35 +182,6 @@ public class JettyServerModule extends JerseyServletModule
           }
         }
     );
-    return server;
   }
 
-  @Provides
-  @Singleton
-  public JacksonJsonProvider getJacksonJsonProvider(@Json ObjectMapper objectMapper)
-  {
-    final JacksonJsonProvider provider = new JacksonJsonProvider();
-    provider.setMapper(objectMapper);
-    return provider;
-  }
-
-  private static Server makeJettyServer(@Self DruidNode node, ServerConfig config)
-  {
-    final QueuedThreadPool threadPool = new QueuedThreadPool();
-    threadPool.setMinThreads(config.getNumThreads());
-    threadPool.setMaxThreads(config.getNumThreads());
-
-    final Server server = new Server(threadPool);
-
-    ServerConnector connector = new ServerConnector(server);
-    connector.setPort(node.getPort());
-    connector.setIdleTimeout(Ints.checkedCast(config.getMaxIdleTime().toStandardDuration().getMillis()));
-    // workaround suggested in -
-    // https://bugs.eclipse.org/bugs/show_bug.cgi?id=435322#c66 for jetty half open connection issues during failovers
-    connector.setAcceptorPriorityDelta(-1);
-
-    server.setConnectors(new Connector[]{connector});
-
-    return server;
-  }
 }

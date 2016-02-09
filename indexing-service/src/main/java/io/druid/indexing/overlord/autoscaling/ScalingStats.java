@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.indexing.overlord.autoscaling;
@@ -21,6 +23,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MinMaxPriorityQueue;
+import com.google.common.collect.Ordering;
 import org.joda.time.DateTime;
 
 import java.util.Collections;
@@ -31,20 +34,20 @@ import java.util.List;
  */
 public class ScalingStats
 {
-  public static enum EVENT
+  public enum EVENT
   {
     PROVISION,
     TERMINATE
   }
 
-  private static final Comparator<ScalingEvent> comparator = new Comparator<ScalingEvent>()
+  private static final Comparator<ScalingEvent> COMPARATOR = new Ordering<ScalingEvent>()
   {
     @Override
     public int compare(ScalingEvent s1, ScalingEvent s2)
     {
-      return -s1.getTimestamp().compareTo(s2.getTimestamp());
+      return s2.getTimestamp().compareTo(s1.getTimestamp());
     }
-  };
+  }.nullsLast();
 
   private final Object lock = new Object();
 
@@ -53,10 +56,10 @@ public class ScalingStats
   public ScalingStats(int capacity)
   {
     if (capacity == 0) {
-      this.recentEvents = MinMaxPriorityQueue.orderedBy(comparator).create();
+      this.recentEvents = MinMaxPriorityQueue.orderedBy(COMPARATOR).create();
     } else {
       this.recentEvents = MinMaxPriorityQueue
-          .orderedBy(comparator)
+          .orderedBy(COMPARATOR)
           .maximumSize(capacity)
           .create();
     }
@@ -93,7 +96,7 @@ public class ScalingStats
   {
     synchronized (lock) {
       List<ScalingEvent> retVal = Lists.newArrayList(recentEvents);
-      Collections.sort(retVal, comparator);
+      Collections.sort(retVal, COMPARATOR);
       return retVal;
     }
   }

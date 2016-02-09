@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.indexing.common.task;
@@ -62,7 +64,12 @@ public abstract class MergeTaskBase extends AbstractFixedIntervalTask
 
   private static final EmittingLogger log = new EmittingLogger(MergeTaskBase.class);
 
-  protected MergeTaskBase(final String id, final String dataSource, final List<DataSegment> segments)
+  protected MergeTaskBase(
+      final String id,
+      final String dataSource,
+      final List<DataSegment> segments,
+      Map<String, Object> context
+  )
   {
     super(
         // _not_ the version, just something uniqueish
@@ -70,7 +77,8 @@ public abstract class MergeTaskBase extends AbstractFixedIntervalTask
             "merge_%s_%s", computeProcessingID(dataSource, segments), new DateTime().toString()
         ),
         dataSource,
-        computeMergedInterval(segments)
+        computeMergedInterval(segments),
+        context
     );
 
     // Verify segment list is nonempty
@@ -143,7 +151,7 @@ public abstract class MergeTaskBase extends AbstractFixedIntervalTask
       final Map<DataSegment, File> gettedSegments = toolbox.fetchSegments(segments);
 
       // merge files together
-      final File fileToUpload = merge(gettedSegments, new File(taskDir, "merged"));
+      final File fileToUpload = merge(toolbox, gettedSegments, new File(taskDir, "merged"));
 
       emitter.emit(builder.build("merger/numMerged", segments.size()));
       emitter.emit(builder.build("merger/mergeTime", System.currentTimeMillis() - startTime));
@@ -198,7 +206,7 @@ public abstract class MergeTaskBase extends AbstractFixedIntervalTask
 
       final Set<String> current = ImmutableSet.copyOf(
           Iterables.transform(
-              taskActionClient.submit(new SegmentListUsedAction(getDataSource(), getInterval())),
+              taskActionClient.submit(new SegmentListUsedAction(getDataSource(), getInterval(), null)),
               toIdentifier
           )
       );
@@ -224,7 +232,7 @@ public abstract class MergeTaskBase extends AbstractFixedIntervalTask
     }
   }
 
-  protected abstract File merge(Map<DataSegment, File> segments, File outDir)
+  protected abstract File merge(TaskToolbox taskToolbox, Map<DataSegment, File> segments, File outDir)
       throws Exception;
 
   @JsonProperty
@@ -249,19 +257,19 @@ public abstract class MergeTaskBase extends AbstractFixedIntervalTask
     final String segmentIDs = Joiner.on("_").join(
         Iterables.transform(
             Ordering.natural().sortedCopy(segments), new Function<DataSegment, String>()
-        {
-          @Override
-          public String apply(DataSegment x)
-          {
-            return String.format(
-                "%s_%s_%s_%s",
-                x.getInterval().getStart(),
-                x.getInterval().getEnd(),
-                x.getVersion(),
-                x.getShardSpec().getPartitionNum()
-            );
-          }
-        }
+            {
+              @Override
+              public String apply(DataSegment x)
+              {
+                return String.format(
+                    "%s_%s_%s_%s",
+                    x.getInterval().getStart(),
+                    x.getInterval().getEnd(),
+                    x.getVersion(),
+                    x.getShardSpec().getPartitionNum()
+                );
+              }
+            }
         )
     );
 

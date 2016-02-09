@@ -1,26 +1,30 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.indexing.worker;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.Inject;
 import com.metamx.common.ISE;
@@ -34,7 +38,9 @@ import org.apache.curator.framework.CuratorFramework;
 import org.apache.zookeeper.CreateMode;
 import org.joda.time.DateTime;
 
+import javax.annotation.Nullable;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * The CuratorCoordinator provides methods to use Curator. Persistent ZK paths are created on {@link #start()}.
@@ -99,7 +105,7 @@ public class WorkerCuratorCoordinator
           ImmutableMap.of("created", new DateTime().toString())
       );
       announcer.start();
-      announcer.announce(getAnnouncementsPathForWorker(), jsonMapper.writeValueAsBytes(worker));
+      announcer.announce(getAnnouncementsPathForWorker(), jsonMapper.writeValueAsBytes(worker), false);
 
       started = true;
     }
@@ -113,8 +119,6 @@ public class WorkerCuratorCoordinator
       if (!started) {
         return;
       }
-
-      announcer.unannounce(getAnnouncementsPathForWorker());
       announcer.stop();
 
       started = false;
@@ -190,7 +194,7 @@ public class WorkerCuratorCoordinator
     }
   }
 
-  public void announceTastAnnouncement(TaskAnnouncement announcement)
+  public void announceTaskAnnouncement(TaskAnnouncement announcement)
   {
     synchronized (lock) {
       if (!started) {
@@ -206,7 +210,7 @@ public class WorkerCuratorCoordinator
         }
 
         curatorFramework.create()
-                        .withMode(CreateMode.EPHEMERAL)
+                        .withMode(CreateMode.PERSISTENT)
                         .forPath(
                             getStatusPathForId(announcement.getTaskStatus().getId()), rawBytes
                         );
@@ -226,7 +230,7 @@ public class WorkerCuratorCoordinator
 
       try {
         if (curatorFramework.checkExists().forPath(getStatusPathForId(announcement.getTaskStatus().getId())) == null) {
-          announceTastAnnouncement(announcement);
+          announceTaskAnnouncement(announcement);
           return;
         }
         byte[] rawBytes = jsonMapper.writeValueAsBytes(announcement);
@@ -244,6 +248,30 @@ public class WorkerCuratorCoordinator
       catch (Exception e) {
         throw Throwables.propagate(e);
       }
+    }
+  }
+
+  public List<TaskAnnouncement> getAnnouncements(){
+    try {
+      return Lists.transform(
+          curatorFramework.getChildren().forPath(getStatusPathForWorker()), new Function<String, TaskAnnouncement>()
+          {
+            @Nullable
+            @Override
+            public TaskAnnouncement apply(String input)
+            {
+              try {
+                return jsonMapper.readValue(curatorFramework.getData().forPath(getStatusPathForId(input)),TaskAnnouncement.class);
+              }
+              catch (Exception e) {
+                throw Throwables.propagate(e);
+              }
+            }
+          }
+      );
+    }
+    catch (Exception e) {
+      throw Throwables.propagate(e);
     }
   }
 

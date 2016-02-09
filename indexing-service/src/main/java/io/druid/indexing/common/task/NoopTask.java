@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.indexing.common.task;
@@ -27,6 +29,9 @@ import io.druid.indexing.common.TaskStatus;
 import io.druid.indexing.common.TaskToolbox;
 import io.druid.indexing.common.actions.TaskActionClient;
 import org.joda.time.DateTime;
+
+import java.util.Map;
+import java.util.UUID;
 
 /**
  */
@@ -62,12 +67,14 @@ public class NoopTask extends AbstractTask
       @JsonProperty("runTime") long runTime,
       @JsonProperty("isReadyTime") long isReadyTime,
       @JsonProperty("isReadyResult") String isReadyResult,
-      @JsonProperty("firehose") FirehoseFactory firehoseFactory
+      @JsonProperty("firehose") FirehoseFactory firehoseFactory,
+      @JsonProperty("context") Map<String, Object> context
   )
   {
     super(
-        id == null ? String.format("noop_%s", new DateTime()) : id,
-        "none"
+        id == null ? String.format("noop_%s_%s", new DateTime(), UUID.randomUUID().toString()) : id,
+        "none",
+        context
     );
 
     this.runTime = (runTime == 0) ? defaultRunTime : runTime;
@@ -140,6 +147,6 @@ public class NoopTask extends AbstractTask
 
   public static NoopTask create()
   {
-    return new NoopTask(null, 0, 0, null, null);
+    return new NoopTask(null, 0, 0, null, null, null);
   }
 }

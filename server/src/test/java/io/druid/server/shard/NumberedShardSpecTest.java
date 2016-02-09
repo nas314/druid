@@ -1,33 +1,43 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.server.shard;
 
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Ordering;
 import io.druid.TestUtil;
+import io.druid.timeline.TimelineObjectHolder;
+import io.druid.timeline.VersionedIntervalTimeline;
 import io.druid.timeline.partition.NumberedShardSpec;
 import io.druid.timeline.partition.PartitionChunk;
 import io.druid.timeline.partition.ShardSpec;
-import junit.framework.Assert;
+import org.joda.time.Interval;
+import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class NumberedShardSpecTest
 {
@@ -96,5 +106,96 @@ public class NumberedShardSpecTest
     Assert.assertFalse(chunks.get(2).abuts(chunks.get(0)));
     Assert.assertFalse(chunks.get(2).abuts(chunks.get(1)));
     Assert.assertFalse(chunks.get(2).abuts(chunks.get(2)));
+  }
+
+  @Test
+  public void testVersionedIntervalTimelineBehaviorForNumberedShardSpec()
+  {
+    //core partition chunks
+    PartitionChunk<String> chunk0 = new NumberedShardSpec(0, 2).createChunk("0");
+    PartitionChunk<String> chunk1 = new NumberedShardSpec(1, 2).createChunk("1");
+
+    //appended partition chunk
+    PartitionChunk<String> chunk4 = new NumberedShardSpec(4, 2).createChunk("4");
+
+    //incomplete partition sets
+    testVersionedIntervalTimelineBehaviorForNumberedShardSpec(
+        ImmutableList.of(chunk0),
+        Collections.EMPTY_SET
+    );
+
+    testVersionedIntervalTimelineBehaviorForNumberedShardSpec(
+        ImmutableList.of(chunk1),
+        Collections.EMPTY_SET
+    );
+
+    testVersionedIntervalTimelineBehaviorForNumberedShardSpec(
+        ImmutableList.of(chunk4),
+        Collections.EMPTY_SET
+    );
+
+
+    testVersionedIntervalTimelineBehaviorForNumberedShardSpec(
+        ImmutableList.of(chunk0, chunk4),
+        Collections.EMPTY_SET
+    );
+
+
+    testVersionedIntervalTimelineBehaviorForNumberedShardSpec(
+        ImmutableList.of(chunk1, chunk4),
+        Collections.EMPTY_SET
+    );
+
+    //complete partition sets
+    testVersionedIntervalTimelineBehaviorForNumberedShardSpec(
+        ImmutableList.of(chunk1, chunk0),
+        ImmutableSet.of("0", "1")
+    );
+
+    testVersionedIntervalTimelineBehaviorForNumberedShardSpec(
+        ImmutableList.of(chunk4, chunk1, chunk0),
+        ImmutableSet.of("0", "1", "4")
+    );
+
+    // a partition set with 0 core partitions
+    chunk0 = new NumberedShardSpec(0, 0).createChunk("0");
+    chunk4 = new NumberedShardSpec(4, 0).createChunk("4");
+
+    testVersionedIntervalTimelineBehaviorForNumberedShardSpec(
+        ImmutableList.of(chunk0),
+        ImmutableSet.of("0")
+    );
+
+    testVersionedIntervalTimelineBehaviorForNumberedShardSpec(
+        ImmutableList.of(chunk4),
+        ImmutableSet.of("4")
+    );
+
+    testVersionedIntervalTimelineBehaviorForNumberedShardSpec(
+        ImmutableList.of(chunk4, chunk0),
+        ImmutableSet.of("0", "4")
+    );
+  }
+
+  private void testVersionedIntervalTimelineBehaviorForNumberedShardSpec(
+      List<PartitionChunk<String>> chunks,
+      Set<String> expectedObjects
+  )
+  {
+    VersionedIntervalTimeline<String, String> timeline = new VersionedIntervalTimeline<>(Ordering.natural());
+    Interval interval = new Interval("2000/3000");
+    String version = "v1";
+    for (PartitionChunk<String> chunk : chunks) {
+      timeline.add(interval, version, chunk);
+    }
+
+    Set<String> actualObjects = new HashSet<>();
+    List<TimelineObjectHolder<String, String>> entries = timeline.lookup(interval);
+    for (TimelineObjectHolder<String, String> entry : entries) {
+      for (PartitionChunk<String> chunk : entry.getObject()) {
+        actualObjects.add(chunk.getObject());
+      }
+    }
+    Assert.assertEquals(expectedObjects, actualObjects);
   }
 }

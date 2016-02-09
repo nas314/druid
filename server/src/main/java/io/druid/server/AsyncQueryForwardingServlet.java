@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.server;
@@ -20,7 +22,7 @@ package io.druid.server;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.jaxrs.smile.SmileMediaTypes;
-import com.google.api.client.repackaged.com.google.common.base.Throwables;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 import com.google.inject.Provider;
 import com.metamx.emitter.EmittingLogger;
@@ -28,13 +30,12 @@ import com.metamx.emitter.service.ServiceEmitter;
 import io.druid.guice.annotations.Json;
 import io.druid.guice.annotations.Smile;
 import io.druid.guice.http.DruidHttpClientConfig;
+import io.druid.query.DruidMetrics;
 import io.druid.query.Query;
-import io.druid.query.QueryMetricUtil;
 import io.druid.server.log.RequestLogger;
 import io.druid.server.router.QueryHostFinder;
 import io.druid.server.router.Router;
 import org.eclipse.jetty.client.HttpClient;
-import org.eclipse.jetty.client.api.ContentProvider;
 import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.api.Response;
 import org.eclipse.jetty.client.api.Result;
@@ -48,7 +49,10 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.ws.rs.core.MediaType;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URLDecoder;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -111,18 +115,46 @@ public class AsyncQueryForwardingServlet extends AsyncProxyServlet
   @Override
   protected void service(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException
   {
-    final boolean isSmile = SmileMediaTypes.APPLICATION_JACKSON_SMILE.equals(request.getContentType()) || APPLICATION_SMILE.equals(request.getContentType());
+    final boolean isSmile = SmileMediaTypes.APPLICATION_JACKSON_SMILE.equals(request.getContentType())
+                            || APPLICATION_SMILE.equals(request.getContentType());
     final ObjectMapper objectMapper = isSmile ? smileMapper : jsonMapper;
     request.setAttribute(OBJECTMAPPER_ATTRIBUTE, objectMapper);
 
-    String host = hostFinder.getDefaultHost();
-    request.setAttribute(HOST_ATTRIBUTE, host);
+    final String defaultHost = hostFinder.getDefaultHost();
+    request.setAttribute(HOST_ATTRIBUTE, defaultHost);
 
-    boolean isQuery = request.getMethod().equals(HttpMethod.POST.asString()) &&
-                      request.getRequestURI().startsWith("/druid/v2");
+    final boolean isQueryEndpoint = request.getRequestURI().startsWith("/druid/v2");
 
-    // queries only exist for POST
-    if (isQuery) {
+    if (isQueryEndpoint && HttpMethod.DELETE.is(request.getMethod())) {
+      // query cancellation request
+      for (final String host : hostFinder.getAllHosts()) {
+        // send query cancellation to all brokers this query may have gone to
+        // to keep the code simple, the proxy servlet will also send a request to one of the default brokers
+        if (!host.equals(defaultHost)) {
+          // issue async requests
+          getHttpClient()
+              .newRequest(rewriteURI(request, host))
+              .method(HttpMethod.DELETE)
+              .send(
+                  new Response.CompleteListener()
+                  {
+                    @Override
+                    public void onComplete(Result result)
+                    {
+                      if (result.isFailed()) {
+                        log.warn(
+                            result.getFailure(),
+                            "Failed to forward cancellation request to [%s]",
+                            host
+                        );
+                      }
+                    }
+                  }
+              );
+        }
+      }
+    } else if (isQueryEndpoint && HttpMethod.POST.is(request.getMethod())) {
+      // query request
       try {
         Query inputQuery = objectMapper.readValue(request.getInputStream(), Query.class);
         if (inputQuery != null) {
@@ -173,7 +205,8 @@ public class AsyncQueryForwardingServlet extends AsyncProxyServlet
       final ObjectMapper objectMapper = (ObjectMapper) request.getAttribute(OBJECTMAPPER_ATTRIBUTE);
       try {
         proxyRequest.content(new BytesContentProvider(objectMapper.writeValueAsBytes(query)));
-      } catch(JsonProcessingException e) {
+      }
+      catch (JsonProcessingException e) {
         Throwables.propagate(e);
       }
     }
@@ -195,16 +228,29 @@ public class AsyncQueryForwardingServlet extends AsyncProxyServlet
   @Override
   protected URI rewriteURI(HttpServletRequest request)
   {
-    final String host = (String) request.getAttribute(HOST_ATTRIBUTE);
-    final StringBuilder uri = new StringBuilder("http://");
+    return rewriteURI(request, (String) request.getAttribute(HOST_ATTRIBUTE));
+  }
 
-    uri.append(host);
-    uri.append(request.getRequestURI());
-    final String queryString = request.getQueryString();
-    if (queryString != null) {
-      uri.append("?").append(queryString);
+  protected URI rewriteURI(HttpServletRequest request, String host)
+  {
+    return makeURI(host, request.getRequestURI(), request.getQueryString());
+  }
+
+  protected static URI makeURI(String host, String requestURI, String rawQueryString)
+  {
+    try {
+      return new URI(
+          "http",
+          host,
+          requestURI,
+          rawQueryString == null ? null : URLDecoder.decode(rawQueryString, "UTF-8"),
+          null
+      );
     }
-    return URI.create(uri.toString());
+    catch (UnsupportedEncodingException | URISyntaxException e) {
+      log.error(e, "Unable to rewrite URI [%s]", e.getMessage());
+      throw Throwables.propagate(e);
+    }
   }
 
   @Override
@@ -261,8 +307,8 @@ public class AsyncQueryForwardingServlet extends AsyncProxyServlet
       final long requestTime = System.currentTimeMillis() - start;
       try {
         emitter.emit(
-            QueryMetricUtil.makeRequestTimeMetric(jsonMapper, query, req.getRemoteAddr())
-                           .build("request/time", requestTime)
+            DruidMetrics.makeQueryTimeMetric(jsonMapper, query, req.getRemoteAddr())
+                        .build("query/time", requestTime)
         );
 
         requestLogger.log(
@@ -272,10 +318,11 @@ public class AsyncQueryForwardingServlet extends AsyncProxyServlet
                 query,
                 new QueryStats(
                     ImmutableMap.<String, Object>of(
-                        "request/time",
+                        "query/time",
                         requestTime,
                         "success",
-                        true
+                        result.isSucceeded()
+                        && result.getResponse().getStatus() == javax.ws.rs.core.Response.Status.OK.getStatusCode()
                     )
                 )
             )

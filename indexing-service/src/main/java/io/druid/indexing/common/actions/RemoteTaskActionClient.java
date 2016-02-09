@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.indexing.common.actions;
@@ -41,6 +43,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Map;
+import java.util.Random;
 
 public class RemoteTaskActionClient implements TaskActionClient
 {
@@ -49,6 +52,7 @@ public class RemoteTaskActionClient implements TaskActionClient
   private final ServerDiscoverySelector selector;
   private final RetryPolicyFactory retryPolicyFactory;
   private final ObjectMapper jsonMapper;
+  private final Random random = new Random();
 
   private static final Logger log = new Logger(RemoteTaskActionClient.class);
 
@@ -106,7 +110,7 @@ public class RemoteTaskActionClient implements TaskActionClient
           throw Throwables.propagate(e);
         }
 
-        if (response.getStatus().getCode() / 200 == 1) {
+        if (response.getStatus().getCode() / 100 == 2) {
           final Map<String, Object> responseDict = jsonMapper.readValue(
               response.getContent(),
               new TypeReference<Map<String, Object>>()
@@ -133,7 +137,7 @@ public class RemoteTaskActionClient implements TaskActionClient
           throw e;
         } else {
           try {
-            final long sleepTime = delay.getMillis();
+            final long sleepTime = jitter(delay.getMillis());
             log.info("Will try again in [%s].", new Duration(sleepTime).toString());
             Thread.sleep(sleepTime);
           }
@@ -145,9 +149,15 @@ public class RemoteTaskActionClient implements TaskActionClient
     }
   }
 
+  private long jitter(long input){
+    final double jitter = random.nextGaussian() * input / 4.0;
+    long retval = input + (long)jitter;
+    return retval < 0 ? 0 : retval;
+  }
+
   private URI makeServiceUri(final Server instance) throws URISyntaxException
   {
-    return new URI(String.format("%s://%s%s", instance.getScheme(), instance.getHost(), "/druid/indexer/v1/action"));
+    return new URI(instance.getScheme(), null, instance.getAddress(), instance.getPort(), "/druid/indexer/v1/action", null, null);
   }
 
   private Server getServiceInstance()

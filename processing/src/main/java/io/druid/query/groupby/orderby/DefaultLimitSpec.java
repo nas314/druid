@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.query.groupby.orderby;
@@ -113,24 +115,32 @@ public class DefaultLimitSpec implements LimitSpec
       }
     };
 
-    Map<String, Ordering<Row>> possibleOrderings = Maps.newTreeMap(String.CASE_INSENSITIVE_ORDER);
+    Map<String, DimensionSpec> dimensionsMap = Maps.newHashMap();
     for (DimensionSpec spec : dimensions) {
-      final String dimension = spec.getOutputName();
-      possibleOrderings.put(dimension, dimensionOrdering(dimension));
+      dimensionsMap.put(spec.getOutputName(), spec);
     }
 
+    Map<String, AggregatorFactory> aggregatorsMap = Maps.newHashMap();
     for (final AggregatorFactory agg : aggs) {
-      final String column = agg.getName();
-      possibleOrderings.put(column, metricOrdering(column, agg.getComparator()));
+      aggregatorsMap.put(agg.getName(), agg);
     }
 
+    Map<String, PostAggregator> postAggregatorsMap = Maps.newHashMap();
     for (PostAggregator postAgg : postAggs) {
-      final String column = postAgg.getName();
-      possibleOrderings.put(column, metricOrdering(column, postAgg.getComparator()));
+      postAggregatorsMap.put(postAgg.getName(), postAgg);
     }
 
     for (OrderByColumnSpec columnSpec : columns) {
-      Ordering<Row> nextOrdering = possibleOrderings.get(columnSpec.getDimension());
+      String columnName = columnSpec.getDimension();
+      Ordering<Row> nextOrdering = null;
+
+      if (postAggregatorsMap.containsKey(columnName)) {
+        nextOrdering = metricOrdering(columnName, postAggregatorsMap.get(columnName).getComparator());
+      } else if (aggregatorsMap.containsKey(columnName)) {
+        nextOrdering = metricOrdering(columnName, aggregatorsMap.get(columnName).getComparator());
+      } else if (dimensionsMap.containsKey(columnName)) {
+        nextOrdering = dimensionOrdering(columnName);
+      }
 
       if (nextOrdering == null) {
         throw new ISE("Unknown column in order clause[%s]", columnSpec);

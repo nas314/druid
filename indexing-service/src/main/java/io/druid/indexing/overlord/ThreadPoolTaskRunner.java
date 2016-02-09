@@ -1,90 +1,208 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.indexing.overlord;
 
-import com.google.common.base.Function;
+import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.Inject;
+import com.metamx.common.Pair;
 import com.metamx.common.lifecycle.LifecycleStop;
 import com.metamx.emitter.EmittingLogger;
+import com.metamx.emitter.service.ServiceEmitter;
+import com.metamx.emitter.service.ServiceMetricEvent;
 import io.druid.concurrent.Execs;
+import io.druid.concurrent.TaskThreadPriority;
 import io.druid.indexing.common.TaskStatus;
 import io.druid.indexing.common.TaskToolbox;
 import io.druid.indexing.common.TaskToolboxFactory;
+import io.druid.indexing.common.config.TaskConfig;
 import io.druid.indexing.common.task.Task;
+import io.druid.indexing.overlord.autoscaling.ScalingStats;
 import io.druid.query.NoopQueryRunner;
 import io.druid.query.Query;
 import io.druid.query.QueryRunner;
-import io.druid.query.QueryRunnerFactoryConglomerate;
 import io.druid.query.QuerySegmentWalker;
 import io.druid.query.SegmentDescriptor;
-import io.druid.query.UnionQueryRunner;
-import org.apache.commons.io.FileUtils;
+import org.joda.time.DateTime;
 import org.joda.time.Interval;
 
-import java.io.File;
 import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Runs tasks in a JVM thread using an ExecutorService.
  */
 public class ThreadPoolTaskRunner implements TaskRunner, QuerySegmentWalker
 {
-  private final TaskToolboxFactory toolboxFactory;
-  private final ListeningExecutorService exec;
-  private final Set<ThreadPoolTaskRunnerWorkItem> runningItems = new ConcurrentSkipListSet<>();
-  private final QueryRunnerFactoryConglomerate conglomerate;
   private static final EmittingLogger log = new EmittingLogger(ThreadPoolTaskRunner.class);
+
+  private final TaskToolboxFactory toolboxFactory;
+  private final TaskConfig taskConfig;
+  private final ConcurrentMap<Integer, ListeningExecutorService> exec = new ConcurrentHashMap<>();
+  private final Set<ThreadPoolTaskRunnerWorkItem> runningItems = new ConcurrentSkipListSet<>();
+  private final ServiceEmitter emitter;
 
   @Inject
   public ThreadPoolTaskRunner(
       TaskToolboxFactory toolboxFactory,
-      QueryRunnerFactoryConglomerate conglomerate
+      TaskConfig taskConfig,
+      ServiceEmitter emitter
   )
   {
     this.toolboxFactory = Preconditions.checkNotNull(toolboxFactory, "toolboxFactory");
-    this.exec = MoreExecutors.listeningDecorator(Execs.singleThreaded("task-runner-%d"));
-    this.conglomerate = conglomerate;
+    this.taskConfig = taskConfig;
+    this.emitter = Preconditions.checkNotNull(emitter, "emitter");
+  }
+
+  @Override
+  public List<Pair<Task, ListenableFuture<TaskStatus>>> restore()
+  {
+    return ImmutableList.of();
+  }
+
+  private static ListeningExecutorService buildExecutorService(int priority)
+  {
+    return MoreExecutors.listeningDecorator(
+        Execs.singleThreaded(
+            "task-runner-%d-priority-" + priority,
+            TaskThreadPriority.getThreadPriorityFromTaskPriority(priority)
+        )
+    );
   }
 
   @LifecycleStop
   public void stop()
   {
-    exec.shutdownNow();
+    for (Map.Entry<Integer, ListeningExecutorService> entry : exec.entrySet()) {
+      try {
+        entry.getValue().shutdown();
+      }
+      catch (SecurityException ex) {
+        log.wtf(ex, "I can't control my own threads!");
+      }
+    }
+
+    for (ThreadPoolTaskRunnerWorkItem item : runningItems) {
+      final Task task = item.getTask();
+      final long start = System.currentTimeMillis();
+      final boolean graceful;
+      final long elapsed;
+      boolean error = false;
+
+      if (taskConfig.isRestoreTasksOnRestart() && task.canRestore()) {
+        // Attempt graceful shutdown.
+        graceful = true;
+        log.info("Starting graceful shutdown of task[%s].", task.getId());
+
+        try {
+          task.stopGracefully();
+          final TaskStatus taskStatus = item.getResult().get(
+              new Interval(new DateTime(start), taskConfig.getGracefulShutdownTimeout()).toDurationMillis(),
+              TimeUnit.MILLISECONDS
+          );
+          log.info(
+              "Graceful shutdown of task[%s] finished in %,dms with status[%s].",
+              task.getId(),
+              System.currentTimeMillis() - start,
+              taskStatus.getStatusCode()
+          );
+        }
+        catch (Exception e) {
+          log.makeAlert(e, "Graceful task shutdown failed: %s", task.getDataSource())
+             .addData("taskId", task.getId())
+             .addData("dataSource", task.getDataSource())
+             .emit();
+          log.warn(e, "Graceful shutdown of task[%s] aborted with exception.", task.getId());
+          error = true;
+        }
+      } else {
+        graceful = false;
+      }
+
+      elapsed = System.currentTimeMillis() - start;
+
+      final ServiceMetricEvent.Builder metricBuilder = ServiceMetricEvent
+          .builder()
+          .setDimension("task", task.getId())
+          .setDimension("dataSource", task.getDataSource())
+          .setDimension("graceful", String.valueOf(graceful))
+          .setDimension("error", String.valueOf(error));
+
+      emitter.emit(metricBuilder.build("task/interrupt/count", 1L));
+      emitter.emit(metricBuilder.build("task/interrupt/elapsed", elapsed));
+    }
+
+    // Ok, now interrupt everything.
+    for (Map.Entry<Integer, ListeningExecutorService> entry : exec.entrySet()) {
+      try {
+        entry.getValue().shutdownNow();
+      }
+      catch (SecurityException ex) {
+        log.wtf(ex, "I can't control my own threads!");
+      }
+    }
   }
 
   @Override
   public ListenableFuture<TaskStatus> run(final Task task)
   {
     final TaskToolbox toolbox = toolboxFactory.build(task);
-    final ListenableFuture<TaskStatus> statusFuture = exec.submit(new ThreadPoolTaskRunnerCallable(task, toolbox));
+    final Object taskPriorityObj = task.getContextValue(TaskThreadPriority.CONTEXT_KEY);
+    int taskPriority = 0;
+    if(taskPriorityObj != null){
+      if(taskPriorityObj instanceof Number) {
+        taskPriority = ((Number) taskPriorityObj).intValue();
+      } else if(taskPriorityObj instanceof String) {
+        try {
+          taskPriority = Integer.parseInt(taskPriorityObj.toString());
+        }
+        catch (NumberFormatException e) {
+          log.error(e, "Error parsing task priority [%s] for task [%s]", taskPriorityObj, task.getId());
+        }
+      }
+    }
+    // Ensure an executor for that priority exists
+    if (!exec.containsKey(taskPriority)) {
+      final ListeningExecutorService executorService = buildExecutorService(taskPriority);
+      if (exec.putIfAbsent(taskPriority, executorService) != null) {
+        // favor prior service
+        executorService.shutdownNow();
+      }
+    }
+    final ListenableFuture<TaskStatus> statusFuture = exec.get(taskPriority)
+                                                          .submit(new ThreadPoolTaskRunnerCallable(task, toolbox));
     final ThreadPoolTaskRunnerWorkItem taskRunnerWorkItem = new ThreadPoolTaskRunnerWorkItem(task, statusFuture);
     runningItems.add(taskRunnerWorkItem);
     Futures.addCallback(
@@ -136,9 +254,9 @@ public class ThreadPoolTaskRunner implements TaskRunner, QuerySegmentWalker
   }
 
   @Override
-  public Collection<ZkWorker> getWorkers()
+  public Optional<ScalingStats> getScalingStats()
   {
-    return Lists.newArrayList();
+    return Optional.absent();
   }
 
   @Override
@@ -153,43 +271,29 @@ public class ThreadPoolTaskRunner implements TaskRunner, QuerySegmentWalker
     return getQueryRunnerImpl(query);
   }
 
-  private <T> QueryRunner<T> getQueryRunnerImpl(final Query<T> query)
+  private <T> QueryRunner<T> getQueryRunnerImpl(Query<T> query)
   {
-    return new UnionQueryRunner<>(
-        Iterables.transform(
-            query.getDataSource().getNames(), new Function<String, QueryRunner>()
-            {
-              @Override
-              public QueryRunner apply(String queryDataSource)
-              {
-                QueryRunner<T> queryRunner = null;
+    QueryRunner<T> queryRunner = null;
+    final String queryDataSource = Iterables.getOnlyElement(query.getDataSource().getNames());
 
-                for (final ThreadPoolTaskRunnerWorkItem taskRunnerWorkItem : ImmutableList.copyOf(runningItems)) {
-                  final Task task = taskRunnerWorkItem.getTask();
-                  if (task.getDataSource().equals(queryDataSource)) {
-                    final QueryRunner<T> taskQueryRunner = task.getQueryRunner(query);
+    for (final ThreadPoolTaskRunnerWorkItem taskRunnerWorkItem : ImmutableList.copyOf(runningItems)) {
+      final Task task = taskRunnerWorkItem.getTask();
+      if (task.getDataSource().equals(queryDataSource)) {
+        final QueryRunner<T> taskQueryRunner = task.getQueryRunner(query);
 
-                    if (taskQueryRunner != null) {
-                      if (queryRunner == null) {
-                        queryRunner = taskQueryRunner;
-                      } else {
-                        log.makeAlert("Found too many query runners for datasource")
-                           .addData("dataSource", queryDataSource)
-                           .emit();
-                      }
-                    }
-                  }
-                }
-                if (queryRunner != null) {
-                  return queryRunner;
-                } else {
-                  return new NoopQueryRunner();
-                }
-              }
-            }
-        ), conglomerate.findFactory(query).getToolchest()
-    );
+        if (taskQueryRunner != null) {
+          if (queryRunner == null) {
+            queryRunner = taskQueryRunner;
+          } else {
+            log.makeAlert("Found too many query runners for datasource")
+               .addData("dataSource", queryDataSource)
+               .emit();
+          }
+        }
+      }
+    }
 
+    return queryRunner == null ? new NoopQueryRunner<T>() : queryRunner;
   }
 
   private static class ThreadPoolTaskRunnerWorkItem extends TaskRunnerWorkItem
@@ -226,7 +330,6 @@ public class ThreadPoolTaskRunner implements TaskRunner, QuerySegmentWalker
     public TaskStatus call()
     {
       final long startTime = System.currentTimeMillis();
-      final File taskDir = toolbox.getTaskWorkDir();
 
       TaskStatus status;
 
@@ -245,19 +348,6 @@ public class ThreadPoolTaskRunner implements TaskRunner, QuerySegmentWalker
       catch (Throwable t) {
         log.error(t, "Uncaught Throwable while running task[%s]", task);
         throw Throwables.propagate(t);
-      }
-
-      try {
-        if (taskDir.exists()) {
-          log.info("Removing task directory: %s", taskDir);
-          FileUtils.deleteDirectory(taskDir);
-        }
-      }
-      catch (Exception e) {
-        log.makeAlert(e, "Failed to delete task directory")
-           .addData("taskDir", taskDir.toString())
-           .addData("task", task.getId())
-           .emit();
       }
 
       try {

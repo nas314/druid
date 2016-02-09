@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.indexing.common.actions;
@@ -65,42 +67,19 @@ public class TaskActionToolbox
     return emitter;
   }
 
-  public boolean segmentsAreFromSamePartitionSet(
+  public void verifyTaskLocks(
+      final Task task,
       final Set<DataSegment> segments
   )
   {
-    // Verify that these segments are all in the same partition set
-
-    Preconditions.checkArgument(!segments.isEmpty(), "segments nonempty");
-    final DataSegment firstSegment = segments.iterator().next();
-    for (final DataSegment segment : segments) {
-      if (!segment.getDataSource().equals(firstSegment.getDataSource())
-          || !segment.getInterval().equals(firstSegment.getInterval())
-          || !segment.getVersion().equals(firstSegment.getVersion())) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  public void verifyTaskLocksAndSinglePartitionSettitude(
-      final Task task,
-      final Set<DataSegment> segments,
-      final boolean allowOlderVersions
-  )
-  {
-    if (!taskLockCoversSegments(task, segments, allowOlderVersions)) {
+    if (!taskLockCoversSegments(task, segments)) {
       throw new ISE("Segments not covered by locks for task: %s", task.getId());
-    }
-    if (!segmentsAreFromSamePartitionSet(segments)) {
-      throw new ISE("Segments are not in the same partition set: %s", segments);
     }
   }
 
   public boolean taskLockCoversSegments(
       final Task task,
-      final Set<DataSegment> segments,
-      final boolean allowOlderVersions
+      final Set<DataSegment> segments
   )
   {
     // Verify that each of these segments falls under some lock
@@ -110,22 +89,18 @@ public class TaskActionToolbox
     // NOTE: insert some segments from the task but not others.
 
     final List<TaskLock> taskLocks = getTaskLockbox().findLocksForTask(task);
-    for(final DataSegment segment : segments) {
+    for (final DataSegment segment : segments) {
       final boolean ok = Iterables.any(
           taskLocks, new Predicate<TaskLock>()
-      {
-        @Override
-        public boolean apply(TaskLock taskLock)
-        {
-          final boolean versionOk = allowOlderVersions
-                                    ? taskLock.getVersion().compareTo(segment.getVersion()) >= 0
-                                    : taskLock.getVersion().equals(segment.getVersion());
-
-          return versionOk
-                 && taskLock.getDataSource().equals(segment.getDataSource())
-                 && taskLock.getInterval().contains(segment.getInterval());
-        }
-      }
+          {
+            @Override
+            public boolean apply(TaskLock taskLock)
+            {
+              return taskLock.getDataSource().equals(segment.getDataSource())
+                     && taskLock.getInterval().contains(segment.getInterval())
+                     && taskLock.getVersion().compareTo(segment.getVersion()) >= 0;
+            }
+          }
       );
 
       if (!ok) {

@@ -1,18 +1,20 @@
 /*
- * Druid - a distributed column store.
- * Copyright 2012 - 2015 Metamarkets Group Inc.
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.cli;
@@ -25,7 +27,9 @@ import com.google.inject.Provides;
 import com.google.inject.name.Names;
 import com.metamx.common.concurrent.ScheduledExecutorFactory;
 import com.metamx.common.logger.Logger;
-import io.airlift.command.Command;
+import io.airlift.airline.Command;
+import io.druid.audit.AuditManager;
+import io.druid.client.CoordinatorServerView;
 import io.druid.client.indexing.IndexingServiceClient;
 import io.druid.guice.ConfigProvider;
 import io.druid.guice.Jerseys;
@@ -41,7 +45,6 @@ import io.druid.metadata.MetadataSegmentManagerConfig;
 import io.druid.metadata.MetadataSegmentManagerProvider;
 import io.druid.metadata.MetadataStorage;
 import io.druid.metadata.MetadataStorageProvider;
-import io.druid.audit.AuditManager;
 import io.druid.server.audit.AuditManagerProvider;
 import io.druid.server.coordinator.DruidCoordinator;
 import io.druid.server.coordinator.DruidCoordinatorConfig;
@@ -50,6 +53,7 @@ import io.druid.server.http.CoordinatorDynamicConfigsResource;
 import io.druid.server.http.CoordinatorRedirectInfo;
 import io.druid.server.http.CoordinatorResource;
 import io.druid.server.http.DatasourcesResource;
+import io.druid.server.http.IntervalsResource;
 import io.druid.server.http.MetadataResource;
 import io.druid.server.http.RedirectFilter;
 import io.druid.server.http.RedirectInfo;
@@ -116,6 +120,7 @@ public class CliCoordinator extends ServerRunnable
                   .in(ManageLifecycle.class);
 
             binder.bind(IndexingServiceClient.class).in(LazySingleton.class);
+            binder.bind(CoordinatorServerView.class).in(LazySingleton.class);
 
             binder.bind(DruidCoordinator.class);
 
@@ -132,8 +137,11 @@ public class CliCoordinator extends ServerRunnable
             Jerseys.addResource(binder, ServersResource.class);
             Jerseys.addResource(binder, DatasourcesResource.class);
             Jerseys.addResource(binder, MetadataResource.class);
+            Jerseys.addResource(binder, IntervalsResource.class);
 
             LifecycleModule.register(binder, Server.class);
+            LifecycleModule.register(binder, DatasourcesResource.class);
+
           }
 
           @Provides
