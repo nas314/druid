@@ -128,7 +128,7 @@ public class LookupDimensionSpec implements DimensionSpec
   {
     final LookupExtractor lookupExtractor = Strings.isNullOrEmpty(name)
                                             ? this.lookup
-                                            : (LookupExtractor) Preconditions.checkNotNull(
+                                            : Preconditions.checkNotNull(
                                                 this.lookupReferencesManager.get(name).get(),
                                                 "can not find lookup with name [%s]",
                                                 name
