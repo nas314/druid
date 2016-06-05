@@ -63,7 +63,7 @@ public class SegmentMetadataQueryQueryToolChestTest
         new SegmentMetadataQueryQueryToolChest(null).getCacheStrategy(query);
 
     // Test cache key generation
-    byte[] expectedKey = {0x04, 0x01, (byte) 0xFF, 0x00, 0x01, 0x02};
+    byte[] expectedKey = {0x04, 0x01, (byte) 0xFF, 0x00, 0x01, 0x02, 0x04};
     byte[] actualKey = strategy.computeCacheKey(query);
     Assert.assertArrayEquals(expectedKey, actualKey);
 
@@ -79,10 +79,13 @@ public class SegmentMetadataQueryQueryToolChestTest
                 true,
                 10881,
                 1,
+                "preferred",
+                "preferred",
                 null
             )
         ), 71982,
         100,
+        null,
         null
     );
 
@@ -111,7 +114,8 @@ public class SegmentMetadataQueryQueryToolChestTest
         ImmutableMap.of(
             "foo", new LongSumAggregatorFactory("foo", "foo"),
             "baz", new DoubleSumAggregatorFactory("baz", "baz")
-        )
+        ),
+        null
     );
     final SegmentAnalysis analysis2 = new SegmentAnalysis(
         "id",
@@ -122,7 +126,8 @@ public class SegmentMetadataQueryQueryToolChestTest
         ImmutableMap.of(
             "foo", new LongSumAggregatorFactory("foo", "foo"),
             "bar", new DoubleSumAggregatorFactory("bar", "bar")
-        )
+        ),
+        null
     );
 
     Assert.assertEquals(
@@ -152,6 +157,7 @@ public class SegmentMetadataQueryQueryToolChestTest
         Maps.<String, ColumnAnalysis>newHashMap(),
         0,
         0,
+        null,
         null
     );
     final SegmentAnalysis analysis2 = new SegmentAnalysis(
@@ -163,7 +169,8 @@ public class SegmentMetadataQueryQueryToolChestTest
         ImmutableMap.of(
             "foo", new LongSumAggregatorFactory("foo", "foo"),
             "bar", new DoubleSumAggregatorFactory("bar", "bar")
-        )
+        ),
+        null
     );
 
     Assert.assertNull(mergeStrict(analysis1, analysis2).getAggregators());
@@ -185,6 +192,7 @@ public class SegmentMetadataQueryQueryToolChestTest
         Maps.<String, ColumnAnalysis>newHashMap(),
         0,
         0,
+        null,
         null
     );
     final SegmentAnalysis analysis2 = new SegmentAnalysis(
@@ -193,6 +201,7 @@ public class SegmentMetadataQueryQueryToolChestTest
         Maps.<String, ColumnAnalysis>newHashMap(),
         0,
         0,
+        null,
         null
     );
 
@@ -212,7 +221,8 @@ public class SegmentMetadataQueryQueryToolChestTest
         ImmutableMap.of(
             "foo", new LongSumAggregatorFactory("foo", "foo"),
             "bar", new DoubleSumAggregatorFactory("bar", "bar")
-        )
+        ),
+        null
     );
     final SegmentAnalysis analysis2 = new SegmentAnalysis(
         "id",
@@ -224,7 +234,8 @@ public class SegmentMetadataQueryQueryToolChestTest
             "foo", new LongSumAggregatorFactory("foo", "foo"),
             "bar", new DoubleMaxAggregatorFactory("bar", "bar"),
             "baz", new LongMaxAggregatorFactory("baz", "baz")
-        )
+        ),
+        null
     );
 
     final Map<String, AggregatorFactory> expectedLenient = Maps.newHashMap();

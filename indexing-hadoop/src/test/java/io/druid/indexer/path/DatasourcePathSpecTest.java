@@ -33,7 +33,7 @@ import io.druid.data.input.impl.CSVParseSpec;
 import io.druid.data.input.impl.DimensionsSpec;
 import io.druid.data.input.impl.StringInputRowParser;
 import io.druid.data.input.impl.TimestampSpec;
-import io.druid.granularity.QueryGranularity;
+import io.druid.granularity.QueryGranularities;
 import io.druid.guice.GuiceInjectors;
 import io.druid.guice.JsonConfigProvider;
 import io.druid.guice.annotations.Self;
@@ -75,6 +75,7 @@ public class DatasourcePathSpecTest
     this.ingestionSpec = new DatasourceIngestionSpec(
         "test",
         Interval.parse("2000/3000"),
+        null,
         null,
         null,
         null,
@@ -275,7 +276,7 @@ public class DatasourcePathSpecTest
                     new LongSumAggregatorFactory("visited_sum", "visited")
                 },
                 new UniformGranularitySpec(
-                    Granularity.DAY, QueryGranularity.NONE, ImmutableList.of(Interval.parse("2000/3000"))
+                    Granularity.DAY, QueryGranularities.NONE, ImmutableList.of(Interval.parse("2000/3000"))
                 ),
                 HadoopDruidIndexerConfig.JSON_MAPPER
             ),

@@ -17,7 +17,7 @@ All Druid metrics share a common set of fields:
 
 Metrics may have additional dimensions beyond those listed above.
 
-Most metric values reset each emission period.
+Most metric values reset each emission period. By default druid emission period is 1 minute, this can be changed by setting the property `druid.monitoring.emissionPeriod`.
 
 Available Metrics
 -----------------
@@ -54,10 +54,16 @@ Available Metrics
 |`query/wait/time`|Milliseconds spent waiting for a segment to be scanned.|id, segment.|several hundred milliseconds|
 |`segment/scan/pending`|Number of segments in queue waiting to be scanned.||Close to 0|
 
+### Jetty
+
+|Metric|Description|Normal Value|
+|------|-----------|------------|
+|`jetty/numOpenConnections`|Number of open jetty connections.|Not much higher than number of jetty threads.|
+
 ### Cache
 
-|Metric|Description|Dimensions|Normal Value|
-|------|-----------|----------|------------|
+|Metric|Description|Normal Value|
+|------|-----------|------------|
 |`query/cache/delta/*`|Cache metrics since the last emission.||N/A|
 |`query/cache/total/*`|Total cache metrics.||N/A|
 
@@ -92,7 +98,7 @@ These metrics are only available if the RealtimeMetricsMonitor is included in th
 |------|-----------|----------|------------|
 |`ingest/events/thrownAway`|Number of events rejected because they are outside the windowPeriod.|dataSource.|0|
 |`ingest/events/unparseable`|Number of events rejected because the events are unparseable.|dataSource.|0|
-|`ingest/events/processed`|Number of events successfully processed.|dataSource.|Equal to your # of events.|
+|`ingest/events/processed`|Number of events successfully processed per emission period.|dataSource.|Equal to your # of events per emission period.|
 |`ingest/rows/output`|Number of Druid rows persisted.|dataSource.|Your # of events with rollup.|
 |`ingest/persists/count`|Number of times persist occurred.|dataSource.|Depends on configuration.|
 |`ingest/persists/time`|Milliseconds spent doing intermediate persist.|dataSource.|Depends on configuration. Generally a few minutes at most.|

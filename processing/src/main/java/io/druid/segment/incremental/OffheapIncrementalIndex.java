@@ -24,6 +24,8 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.Maps;
 import com.metamx.common.IAE;
 import com.metamx.common.ISE;
+import com.metamx.common.logger.Logger;
+import com.metamx.common.parsers.ParseException;
 import io.druid.collections.ResourceHolder;
 import io.druid.collections.StupidPool;
 import io.druid.data.input.InputRow;
@@ -37,7 +39,8 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentNavigableMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -45,12 +48,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
 {
+  private static final Logger log = new Logger(OffheapIncrementalIndex.class);
+
   private final StupidPool<ByteBuffer> bufferPool;
 
   private final List<ResourceHolder<ByteBuffer>> aggBuffers = new ArrayList<>();
   private final List<int[]> indexAndOffsets = new ArrayList<>();
 
-  private final ConcurrentNavigableMap<TimeAndDims, Integer> facts;
+  private final ConcurrentMap<TimeAndDims, Integer> facts;
 
   private final AtomicInteger indexIncrement = new AtomicInteger(0);
 
@@ -69,14 +74,21 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
   public OffheapIncrementalIndex(
       IncrementalIndexSchema incrementalIndexSchema,
       boolean deserializeComplexMetrics,
+      boolean reportParseExceptions,
+      boolean sortFacts,
       int maxRowCount,
       StupidPool<ByteBuffer> bufferPool
   )
   {
-    super(incrementalIndexSchema, deserializeComplexMetrics);
+    super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions, sortFacts);
     this.maxRowCount = maxRowCount;
     this.bufferPool = bufferPool;
-    this.facts = new ConcurrentSkipListMap<>(dimsComparator());
+
+    if (sortFacts) {
+      this.facts = new ConcurrentSkipListMap<>(dimsComparator());
+    } else {
+      this.facts = new ConcurrentHashMap<>();
+    }
 
     //check that stupid pool gives buffers that can hold at least one row's aggregators
     ResourceHolder<ByteBuffer> bb = bufferPool.take();
@@ -97,6 +109,8 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
       QueryGranularity gran,
       final AggregatorFactory[] metrics,
       boolean deserializeComplexMetrics,
+      boolean reportParseExceptions,
+      boolean sortFacts,
       int maxRowCount,
       StupidPool<ByteBuffer> bufferPool
   )
@@ -107,6 +121,8 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
                                             .withMetrics(metrics)
                                             .build(),
         deserializeComplexMetrics,
+        reportParseExceptions,
+        sortFacts,
         maxRowCount,
         bufferPool
     );
@@ -126,13 +142,15 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
                                             .withMetrics(metrics)
                                             .build(),
         true,
+        true,
+        true,
         maxRowCount,
         bufferPool
     );
   }
 
   @Override
-  public ConcurrentNavigableMap<TimeAndDims, Integer> getFacts()
+  public ConcurrentMap<TimeAndDims, Integer> getFacts()
   {
     return facts;
   }
@@ -151,8 +169,6 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
     selectors = Maps.newHashMap();
     aggOffsetInBuffer = new int[metrics.length];
 
-    BufferAggregator[] aggregators = new BufferAggregator[metrics.length];
-
     for (int i = 0; i < metrics.length; i++) {
       AggregatorFactory agg = metrics[i];
 
@@ -167,7 +183,6 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
           new OnheapIncrementalIndex.ObjectCachingColumnSelectorFactory(columnSelectorFactory)
       );
 
-      aggregators[i] = agg.factorizeBuffered(columnSelectorFactory);
       if (i == 0) {
         aggOffsetInBuffer[i] = 0;
       } else {
@@ -177,13 +192,14 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
 
     aggsTotalSize = aggOffsetInBuffer[metrics.length - 1] + metrics[metrics.length - 1].getMaxIntermediateSize();
 
-    return aggregators;
+    return new BufferAggregator[metrics.length];
   }
 
   @Override
   protected Integer addToFacts(
       AggregatorFactory[] metrics,
       boolean deserializeComplexMetrics,
+      boolean reportParseExceptions,
       InputRow row,
       AtomicInteger numEntries,
       TimeAndDims key,
@@ -203,6 +219,19 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
         bufferOffset = indexAndOffset[1];
         aggBuffer = aggBuffers.get(bufferIndex).get();
       } else {
+        if (metrics.length > 0 && getAggs()[0] == null) {
+          // note: creation of Aggregators is done lazily when at least one row from input is available
+          // so that FilteredAggregators could be initialized correctly.
+          rowContainer.set(row);
+          for (int i = 0; i < metrics.length; i++) {
+            final AggregatorFactory agg = metrics[i];
+            getAggs()[i] = agg.factorizeBuffered(
+                makeColumnSelectorFactory(agg, rowSupplier, deserializeComplexMetrics)
+            );
+          }
+          rowContainer.set(null);
+        }
+
         bufferIndex = aggBuffers.size() - 1;
         ByteBuffer lastBuffer = aggBuffers.isEmpty() ? null : aggBuffers.get(aggBuffers.size() - 1).get();
         int[] lastAggregatorsIndexAndOffset = indexAndOffsets.isEmpty()
@@ -235,10 +264,13 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
         }
 
         final Integer rowIndex = indexIncrement.getAndIncrement();
+
+        // note that indexAndOffsets must be updated before facts, because as soon as we update facts
+        // concurrent readers get hold of it and might ask for newly added row
+        indexAndOffsets.add(new int[]{bufferIndex, bufferOffset});
         final Integer prev = facts.putIfAbsent(key, rowIndex);
         if (null == prev) {
           numEntries.incrementAndGet();
-          indexAndOffsets.add(new int[]{bufferIndex, bufferOffset});
         } else {
           throw new ISE("WTF! we are in sychronized block.");
         }
@@ -251,7 +283,16 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
       final BufferAggregator agg = getAggs()[i];
 
       synchronized (agg) {
-        agg.aggregate(aggBuffer, bufferOffset + aggOffsetInBuffer[i]);
+        try {
+          agg.aggregate(aggBuffer, bufferOffset + aggOffsetInBuffer[i]);
+        } catch (ParseException e) {
+          // "aggregate" can throw ParseExceptions if a selector expects something but gets something else.
+          if (reportParseExceptions) {
+            throw new ParseException(e, "Encountered parse error for aggregator[%s]", getMetricAggs()[i].getName());
+          } else {
+            log.debug(e, "Encountered parse error, skipping aggregator[%s].", getMetricAggs()[i].getName());
+          }
+        }
       }
     }
     rowContainer.set(null);

@@ -16,7 +16,8 @@
   ~ limitations under the License.
   -->
 
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -26,7 +27,7 @@
     </parent>
 
     <artifactId>druid</artifactId>
-    <version>0.9.0-SNAPSHOT</version>
+    <version>0.9.1-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>${project.groupId}:${project.artifactId}</name>
@@ -53,15 +54,14 @@
         <connection>scm:git:ssh://git@github.com/druid-io/druid.git</connection>
         <developerConnection>scm:git:ssh://git@github.com/druid-io/druid.git</developerConnection>
         <url>https://github.com/druid-io/druid.git</url>
-        <tag>0.9.0-SNAPSHOT</tag>
+        <tag>0.9.1-SNAPSHOT</tag>
     </scm>
 
     <properties>
-        <metamx.java-util.version>0.27.7</metamx.java-util.version>
-        <apache.curator.version>2.9.1</apache.curator.version>
+        <metamx.java-util.version>0.27.9</metamx.java-util.version>
+        <apache.curator.version>2.10.0</apache.curator.version>
         <jetty.version>9.2.5.v20141112</jetty.version>
         <jersey.version>1.19</jersey.version>
-        <druid.api.version>0.3.16</druid.api.version>
         <!-- Watch out for Hadoop compatibility when updating to >= 2.5; see https://github.com/druid-io/druid/pull/1669 -->
         <jackson.version>2.4.6</jackson.version>
         <log4j.version>2.5</log4j.version>
@@ -70,6 +70,7 @@
     </properties>
 
     <modules>
+        <module>api</module>
         <module>common</module>
         <module>examples</module>
         <module>indexing-hadoop</module>
@@ -80,39 +81,36 @@
         <module>integration-tests</module>
         <module>benchmarks</module>
         <module>aws-common</module>
-        <!-- Non-default modules -->
-        <module>extensions/cassandra-storage</module>
-        <module>extensions/hdfs-storage</module>
-        <module>extensions/s3-extensions</module>
-        <module>extensions/graphite-emitter</module>
-        <!-- kafka-seven extension is not built by default since
-             Kafka 0.7 is not available in Maven Central -->
-        <!-- <module>extensions/kafka&#45;seven</module> -->
-        <module>extensions/kafka-eight</module>
-        <module>extensions/kafka-eight-simpleConsumer</module>
-        <module>extensions/rabbitmq</module>
-        <module>extensions/histogram</module>
-        <module>extensions/mysql-metadata-storage</module>
-        <module>extensions/postgresql-metadata-storage</module>
-        <module>extensions/azure-extensions</module>
-        <module>extensions/namespace-lookup</module>
-        <module>extensions/kafka-extraction-namespace</module>
-        <module>extensions/cloudfiles-extensions</module>
-        <module>extensions/datasketches</module>
-        <module>extensions/avro-extensions</module>
+        <!-- Core extensions -->
+        <module>extensions-core/avro-extensions</module>
+        <module>extensions-core/datasketches</module>
+        <module>extensions-core/hdfs-storage</module>
+        <module>extensions-core/histogram</module>
+        <module>extensions-core/kafka-eight</module>
+        <module>extensions-core/kafka-extraction-namespace</module>
+        <module>extensions-core/kafka-indexing-service</module>
+        <module>extensions-core/mysql-metadata-storage</module>
+        <module>extensions-core/postgresql-metadata-storage</module>
+        <module>extensions-core/lookups-cached-global</module>
+        <module>extensions-core/s3-extensions</module>
+        <!-- Community extensions -->
+        <module>extensions-contrib/azure-extensions</module>
+        <module>extensions-contrib/cassandra-storage</module>
+        <module>extensions-contrib/druid-rocketmq</module>
+        <module>extensions-contrib/cloudfiles-extensions</module>
+        <module>extensions-contrib/graphite-emitter</module>
+        <module>extensions-contrib/kafka-eight-simpleConsumer</module>
+        <module>extensions-contrib/rabbitmq</module>
+        <module>extensions-contrib/distinctcount</module>
+        <module>extensions-contrib/parquet-extensions</module>
+	<module>extensions-contrib/statsd-emitter</module>
+
         <!-- distribution packaging -->
         <module>distribution</module>
-
     </modules>
 
     <dependencyManagement>
         <dependencies>
-            <dependency>
-                <groupId>io.druid</groupId>
-                <artifactId>druid-api</artifactId>
-                <version>${druid.api.version}</version>
-            </dependency>
-
             <!-- Compile Scope -->
             <dependency>
                 <groupId>com.metamx</groupId>
@@ -128,6 +126,12 @@
                 <groupId>com.metamx</groupId>
                 <artifactId>java-util</artifactId>
                 <version>${metamx.java-util.version}</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.slf4j</groupId>
+                        <artifactId>slf4j-api</artifactId>
+                    </exclusion>
+                </exclusions>
             </dependency>
             <dependency>
                 <groupId>com.metamx</groupId>
@@ -201,6 +205,27 @@
                 <groupId>org.skife.config</groupId>
                 <artifactId>config-magic</artifactId>
                 <version>0.9</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.slf4j</groupId>
+                        <artifactId>slf4j-api</artifactId>
+                    </exclusion>
+                </exclusions>
+              </dependency>
+            <dependency>
+                <groupId>org.apache.zookeeper</groupId>
+                <artifactId>zookeeper</artifactId>
+                <version>3.4.8</version>
+                <exclusions>
+                  <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-log4j12</artifactId>
+                  </exclusion>
+                  <exclusion>
+                    <groupId>log4j</groupId>
+                    <artifactId>log4j</artifactId>
+                  </exclusion>
+                </exclusions>
             </dependency>
             <dependency>
                 <groupId>org.apache.curator</groupId>
@@ -404,15 +429,15 @@
                 <version>${log4j.version}</version>
             </dependency>
             <dependency>
-              <!-- This is not slf4j's version because of performance concerns
-              http://www.slf4j.org/api/org/slf4j/bridge/SLF4JBridgeHandler.html
-              Please make sure to do performance tests before switching this to slf4j
-              Users wishing to use slf4j's solution are encouraged to also use
-              Logback
-              More info at
-              http://logback.qos.ch/manual/configuration.html#LevelChangePropagator
-              http://www.slf4j.org/legacy.html#jul-to-slf4j
-              -->
+                <!-- This is not slf4j's version because of performance concerns
+                http://www.slf4j.org/api/org/slf4j/bridge/SLF4JBridgeHandler.html
+                Please make sure to do performance tests before switching this to slf4j
+                Users wishing to use slf4j's solution are encouraged to also use
+                Logback
+                More info at
+                http://logback.qos.ch/manual/configuration.html#LevelChangePropagator
+                http://www.slf4j.org/legacy.html#jul-to-slf4j
+                -->
                 <groupId>org.apache.logging.log4j</groupId>
                 <artifactId>log4j-jul</artifactId>
                 <version>${log4j.version}</version>
@@ -435,12 +460,12 @@
             <dependency>
                 <groupId>org.antlr</groupId>
                 <artifactId>antlr4-runtime</artifactId>
-                <version>4.0</version>
+                <version>4.5.1</version>
             </dependency>
             <dependency>
                 <groupId>org.antlr</groupId>
                 <artifactId>antlr4-coordinator</artifactId>
-                <version>4.0</version>
+                <version>4.5.1</version>
             </dependency>
             <dependency>
                 <groupId>commons-cli</groupId>
@@ -466,6 +491,12 @@
                 <groupId>io.tesla.aether</groupId>
                 <artifactId>tesla-aether</artifactId>
                 <version>0.0.5</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.slf4j</groupId>
+                        <artifactId>slf4j-api</artifactId>
+                    </exclusion>
+                </exclusions>
             </dependency>
             <dependency>
                 <groupId>org.eclipse.aether</groupId>
@@ -476,6 +507,32 @@
                 <groupId>net.java.dev.jets3t</groupId>
                 <artifactId>jets3t</artifactId>
                 <version>0.9.4</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>commons-codec</groupId>
+                        <artifactId>commons-codec</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>commons-logging</groupId>
+                        <artifactId>commons-logging</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>org.apache.httpcomponents</groupId>
+                        <artifactId>httpclient</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>org.apache.httpcomponents</groupId>
+                        <artifactId>httpcore</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>org.codehaus.jackson</groupId>
+                        <artifactId>jackson-core-asl</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>org.codehaus.jackson</groupId>
+                        <artifactId>jackson-mapper-asl</artifactId>
+                    </exclusion>
+                </exclusions>
             </dependency>
             <!-- The htttpcomponents artifacts have non-matching release cadence -->
             <dependency>
@@ -509,6 +566,11 @@
                 <artifactId>derbyclient</artifactId>
                 <version>10.11.1.1</version>
             </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-math3</artifactId>
+                <version>3.6.1</version>
+            </dependency>
 
             <!-- Test Scope -->
             <dependency>
@@ -529,6 +591,11 @@
                 <artifactId>junit</artifactId>
                 <version>4.11</version>
                 <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-simple</artifactId>
+                <version>${slf4j.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.carrotsearch</groupId>
@@ -558,12 +625,22 @@
                 <groupId>com.ircclouds.irc</groupId>
                 <artifactId>irc-api</artifactId>
                 <version>1.0-0014</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.slf4j</groupId>
+                        <artifactId>slf4j-api</artifactId>
+                    </exclusion>
+                </exclusions>
             </dependency>
             <dependency>
                 <groupId>com.maxmind.geoip2</groupId>
                 <artifactId>geoip2</artifactId>
                 <version>0.4.0</version>
                 <exclusions>
+                    <exclusion>
+                        <groupId>com.google.http-client</groupId>
+                        <artifactId>google-http-client</artifactId>
+                    </exclusion>
                     <exclusion>
                         <groupId>org.apache.httpcomponents</groupId>
                         <artifactId>httpclient</artifactId>
@@ -583,6 +660,12 @@
                 <groupId>org.hamcrest</groupId>
                 <artifactId>hamcrest-all</artifactId>
                 <version>1.3</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>pl.pragmatists</groupId>
+                <artifactId>JUnitParams</artifactId>
+                <version>1.0.4</version>
                 <scope>test</scope>
             </dependency>
         </dependencies>
@@ -608,7 +691,9 @@
                     <configuration>
                         <!-- locale settings must be set on the command line before startup -->
                         <!-- set heap size to work around https://github.com/travis-ci/travis-ci/issues/3396 -->
-                        <argLine>-Xmx1024m -Duser.language=en -Duser.country=US -Dfile.encoding=UTF-8 -Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager</argLine>
+                        <argLine>-Xmx1024m -Duser.language=en -Duser.country=US -Dfile.encoding=UTF-8
+                            -Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager
+                        </argLine>
                         <!-- our tests are very verbose, let's keep the volume down -->
                         <redirectTestOutputToFile>true</redirectTestOutputToFile>
                     </configuration>
@@ -644,6 +729,14 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-install-plugin</artifactId>
                     <version>2.3.1</version>
+                    <executions>
+                        <execution>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>install</goal>
+                            </goals>
+                        </execution>
+                    </executions>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
@@ -668,7 +761,7 @@
                 <plugin>
                     <groupId>org.antlr</groupId>
                     <artifactId>antlr4-maven-plugin</artifactId>
-                    <version>4.0</version>
+                    <version>4.5.1</version>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>

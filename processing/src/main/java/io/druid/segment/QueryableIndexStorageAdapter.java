@@ -35,6 +35,7 @@ import io.druid.query.QueryInterruptedException;
 import io.druid.query.dimension.DimensionSpec;
 import io.druid.query.extraction.ExtractionFn;
 import io.druid.query.filter.Filter;
+import io.druid.segment.column.BitmapIndex;
 import io.druid.segment.column.Column;
 import io.druid.segment.column.ColumnCapabilities;
 import io.druid.segment.column.ComplexColumn;
@@ -138,6 +139,28 @@ public class QueryableIndexStorageAdapter implements StorageAdapter
     finally {
       CloseQuietly.close(column);
     }
+  }
+
+  @Override
+  public Comparable getMinValue(String dimension)
+  {
+    Column column = index.getColumn(dimension);
+    if (column != null && column.getCapabilities().hasBitmapIndexes()) {
+      BitmapIndex bitmap = column.getBitmapIndex();
+      return bitmap.getCardinality() > 0 ? bitmap.getValue(0) : null;
+    }
+    return null;
+  }
+
+  @Override
+  public Comparable getMaxValue(String dimension)
+  {
+    Column column = index.getColumn(dimension);
+    if (column != null && column.getCapabilities().hasBitmapIndexes()) {
+      BitmapIndex bitmap = column.getBitmapIndex();
+      return bitmap.getCardinality() > 0 ? bitmap.getValue(bitmap.getCardinality() - 1) : null;
+    }
+    return null;
   }
 
   @Override
@@ -316,7 +339,7 @@ public class QueryableIndexStorageAdapter implements StorageAdapter
                     public void advance()
                     {
                       if (Thread.interrupted()) {
-                        throw new QueryInterruptedException();
+                        throw new QueryInterruptedException(new InterruptedException());
                       }
                       cursorOffset.increment();
                     }
@@ -401,8 +424,8 @@ public class QueryableIndexStorageAdapter implements StorageAdapter
                           {
                             final String value = column.lookupName(id);
                             return extractionFn == null ?
-                                   Strings.nullToEmpty(value) :
-                                   extractionFn.apply(Strings.nullToEmpty(value));
+                                   value :
+                                   extractionFn.apply(value);
                           }
 
                           @Override
@@ -591,7 +614,7 @@ public class QueryableIndexStorageAdapter implements StorageAdapter
 
                         if (columnVals.hasMultipleValues()) {
                           throw new UnsupportedOperationException(
-                              "makeObjectColumnSelector does not support multivalued GenericColumns"
+                              "makeObjectColumnSelector does not support multi-value GenericColumns"
                           );
                         }
 

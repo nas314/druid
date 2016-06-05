@@ -156,9 +156,10 @@ public class ZkWorker implements Closeable
     lastCompletedTaskTime.set(completedTaskTime);
   }
 
-  public ImmutableZkWorker toImmutable()
+  public ImmutableWorkerInfo toImmutable()
   {
-    return new ImmutableZkWorker(worker.get(), getCurrCapacityUsed(), getAvailabilityGroups());
+
+    return new ImmutableWorkerInfo(worker.get(), getCurrCapacityUsed(), getAvailabilityGroups(), getRunningTaskIds(), lastCompletedTaskTime.get());
   }
 
   @Override

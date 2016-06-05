@@ -80,4 +80,39 @@ public class Worker
            ", version='" + version + '\'' +
            '}';
   }
+
+  @Override
+  public boolean equals(Object o)
+  {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+
+    Worker worker = (Worker) o;
+
+    if (capacity != worker.capacity) {
+      return false;
+    }
+    if (!host.equals(worker.host)) {
+      return false;
+    }
+    if (!ip.equals(worker.ip)) {
+      return false;
+    }
+    return version.equals(worker.version);
+
+  }
+
+  @Override
+  public int hashCode()
+  {
+    int result = host.hashCode();
+    result = 31 * result + ip.hashCode();
+    result = 31 * result + capacity;
+    result = 31 * result + version.hashCode();
+    return result;
+  }
 }

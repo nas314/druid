@@ -31,7 +31,7 @@ import io.druid.query.aggregation.DoubleMinAggregatorFactory;
 import io.druid.query.aggregation.PostAggregator;
 import io.druid.query.dimension.ExtractionDimensionSpec;
 import io.druid.query.dimension.LegacyDimensionSpec;
-import io.druid.query.extraction.LookupExtractionFn;
+import io.druid.query.lookup.LookupExtractionFn;
 import io.druid.query.extraction.MapLookupExtractor;
 import org.junit.Assert;
 import org.junit.Test;
@@ -93,7 +93,7 @@ public class TopNQueryTest
             new ExtractionDimensionSpec(
                 marketDimension,
                 marketDimension,
-                new LookupExtractionFn(new MapLookupExtractor(ImmutableMap.of("foo", "bar")), true, null, false, false),
+                new LookupExtractionFn(new MapLookupExtractor(ImmutableMap.of("foo", "bar"), false), true, null, false, false),
                 null
             )
         )

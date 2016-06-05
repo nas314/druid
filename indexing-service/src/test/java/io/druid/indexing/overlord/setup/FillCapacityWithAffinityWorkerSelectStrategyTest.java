@@ -23,9 +23,10 @@ import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Sets;
 import io.druid.indexing.common.task.NoopTask;
-import io.druid.indexing.overlord.ImmutableZkWorker;
+import io.druid.indexing.overlord.ImmutableWorkerInfo;
 import io.druid.indexing.overlord.config.RemoteTaskRunnerConfig;
 import io.druid.indexing.worker.Worker;
+import org.joda.time.DateTime;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -40,18 +41,22 @@ public class FillCapacityWithAffinityWorkerSelectStrategyTest
         new FillCapacityWithAffinityConfig(ImmutableMap.of("foo", Arrays.asList("localhost")))
     );
 
-    Optional<ImmutableZkWorker> optional = strategy.findWorkerForTask(
+    Optional<ImmutableWorkerInfo> optional = strategy.findWorkerForTask(
         new RemoteTaskRunnerConfig(),
         ImmutableMap.of(
             "lhost",
-            new ImmutableZkWorker(
+            new ImmutableWorkerInfo(
                 new Worker("lhost", "lhost", 1, "v1"), 0,
-                Sets.<String>newHashSet()
+                Sets.<String>newHashSet(),
+                Sets.<String>newHashSet(),
+                DateTime.now()
             ),
             "localhost",
-            new ImmutableZkWorker(
+            new ImmutableWorkerInfo(
                 new Worker("localhost", "localhost", 1, "v1"), 0,
-                Sets.<String>newHashSet()
+                Sets.<String>newHashSet(),
+                Sets.<String>newHashSet(),
+                DateTime.now()
             )
         ),
         new NoopTask(null, 1, 0, null, null, null)
@@ -63,7 +68,7 @@ public class FillCapacityWithAffinityWorkerSelectStrategyTest
           }
         }
     );
-    ImmutableZkWorker worker = optional.get();
+    ImmutableWorkerInfo worker = optional.get();
     Assert.assertEquals("localhost", worker.getWorker().getHost());
   }
 
@@ -74,23 +79,27 @@ public class FillCapacityWithAffinityWorkerSelectStrategyTest
         new FillCapacityWithAffinityConfig(ImmutableMap.of("foo", Arrays.asList("localhost")))
     );
 
-    Optional<ImmutableZkWorker> optional = strategy.findWorkerForTask(
+    Optional<ImmutableWorkerInfo> optional = strategy.findWorkerForTask(
         new RemoteTaskRunnerConfig(),
         ImmutableMap.of(
             "lhost",
-            new ImmutableZkWorker(
+            new ImmutableWorkerInfo(
                 new Worker("lhost", "lhost", 1, "v1"), 0,
-                Sets.<String>newHashSet()
+                Sets.<String>newHashSet(),
+                Sets.<String>newHashSet(),
+                DateTime.now()
             ),
             "localhost",
-            new ImmutableZkWorker(
+            new ImmutableWorkerInfo(
                 new Worker("localhost", "localhost", 1, "v1"), 0,
-                Sets.<String>newHashSet()
+                Sets.<String>newHashSet(),
+                Sets.<String>newHashSet(),
+                DateTime.now()
             )
         ),
         new NoopTask(null, 1, 0, null, null, null)
     );
-    ImmutableZkWorker worker = optional.get();
+    ImmutableWorkerInfo worker = optional.get();
     Assert.assertEquals("lhost", worker.getWorker().getHost());
   }
 
@@ -101,13 +110,15 @@ public class FillCapacityWithAffinityWorkerSelectStrategyTest
         new FillCapacityWithAffinityConfig(ImmutableMap.of("foo", Arrays.asList("localhost")))
     );
 
-    Optional<ImmutableZkWorker> optional = strategy.findWorkerForTask(
+    Optional<ImmutableWorkerInfo> optional = strategy.findWorkerForTask(
         new RemoteTaskRunnerConfig(),
         ImmutableMap.of(
             "localhost",
-            new ImmutableZkWorker(
+            new ImmutableWorkerInfo(
                 new Worker("localhost", "localhost", 1, "v1"), 0,
-                Sets.<String>newHashSet()
+                Sets.<String>newHashSet(),
+                Sets.<String>newHashSet(),
+                DateTime.now()
             )
         ),
         new NoopTask(null, 1, 0, null, null, null)

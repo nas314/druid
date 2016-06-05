@@ -22,9 +22,10 @@ package io.druid.indexer.hadoop;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
-import io.druid.granularity.QueryGranularity;
+import io.druid.granularity.QueryGranularities;
 import io.druid.query.filter.SelectorDimFilter;
 import io.druid.segment.TestHelper;
+import io.druid.timeline.DataSegment;
 import org.joda.time.Interval;
 import org.junit.Assert;
 import org.junit.Test;
@@ -46,8 +47,9 @@ public class DatasourceIngestionSpecTest
         "test",
         interval,
         null,
-        new SelectorDimFilter("dim", "value"),
-        QueryGranularity.DAY,
+        null,
+        new SelectorDimFilter("dim", "value", null),
+        QueryGranularities.DAY,
         Lists.newArrayList("d1", "d2"),
         Lists.newArrayList("m1", "m2", "m3"),
         false
@@ -84,6 +86,7 @@ public class DatasourceIngestionSpecTest
         null,
         null,
         null,
+        null,
         false
     );
 
@@ -93,6 +96,18 @@ public class DatasourceIngestionSpecTest
     jsonStr = "{\n"
               + "  \"dataSource\": \"test\",\n"
               + "  \"intervals\": [\"2014/2015\", \"2016/2017\"],\n"
+              + "  \"segments\": [{\n"
+              + "    \"dataSource\":\"test\",\n"
+              + "    \"interval\":\"2014-01-01T00:00:00.000Z/2017-01-01T00:00:00.000Z\",\n"
+              + "    \"version\":\"v0\",\n"
+              + "    \"loadSpec\":null,\n"
+              + "    \"dimensions\":\"\",\n"
+              + "    \"metrics\":\"\",\n"
+              + "    \"shardSpec\":{\"type\":\"none\"},\n"
+              + "    \"binaryVersion\":9,\n"
+              + "    \"size\":128,\n"
+              + "    \"identifier\":\"test_2014-01-01T00:00:00.000Z_2017-01-01T00:00:00.000Z_v0\"\n"
+              + "    }],\n"
               + "  \"filter\": { \"type\": \"selector\", \"dimension\": \"dim\", \"value\": \"value\"},\n"
               + "  \"granularity\": \"day\",\n"
               + "  \"dimensions\": [\"d1\", \"d2\"],\n"
@@ -104,8 +119,21 @@ public class DatasourceIngestionSpecTest
         "test",
         null,
         intervals,
-        new SelectorDimFilter("dim", "value"),
-        QueryGranularity.DAY,
+        ImmutableList.of(
+            new DataSegment(
+                "test",
+                Interval.parse("2014/2017"),
+                "v0",
+                null,
+                null,
+                null,
+                null,
+                9,
+                128
+            )
+        ),
+        new SelectorDimFilter("dim", "value", null),
+        QueryGranularities.DAY,
         Lists.newArrayList("d1", "d2"),
         Lists.newArrayList("m1", "m2", "m3"),
         true
@@ -128,7 +156,7 @@ public class DatasourceIngestionSpecTest
     DatasourceIngestionSpec actual = MAPPER.readValue(jsonStr, DatasourceIngestionSpec.class);
 
     Assert.assertEquals(
-        new DatasourceIngestionSpec("test", Interval.parse("2014/2015"), null, null, null, null, null, false),
+        new DatasourceIngestionSpec("test", Interval.parse("2014/2015"), null, null, null, null, null, null, false),
         actual
     );
   }

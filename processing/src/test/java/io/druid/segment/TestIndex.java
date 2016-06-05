@@ -30,7 +30,7 @@ import io.druid.data.input.impl.DelimitedParseSpec;
 import io.druid.data.input.impl.DimensionsSpec;
 import io.druid.data.input.impl.StringInputRowParser;
 import io.druid.data.input.impl.TimestampSpec;
-import io.druid.granularity.QueryGranularity;
+import io.druid.granularity.QueryGranularities;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.DoubleSumAggregatorFactory;
 import io.druid.query.aggregation.hyperloglog.HyperUniquesAggregatorFactory;
@@ -163,7 +163,7 @@ public class TestIndex
     }
   }
 
-  private static IncrementalIndex makeRealtimeIndex(final String resourceFilename)
+  public static IncrementalIndex makeRealtimeIndex(final String resourceFilename)
   {
     final URL resource = TestIndex.class.getClassLoader().getResource(resourceFilename);
     if (resource == null) {
@@ -178,57 +178,71 @@ public class TestIndex
   {
     final IncrementalIndexSchema schema = new IncrementalIndexSchema.Builder()
         .withMinTimestamp(new DateTime("2011-01-12T00:00:00.000Z").getMillis())
-        .withQueryGranularity(QueryGranularity.NONE)
+        .withQueryGranularity(QueryGranularities.NONE)
         .withMetrics(METRIC_AGGS)
         .build();
-    final IncrementalIndex retVal = new OnheapIncrementalIndex(
-        schema,
-        10000
-    );
+    final IncrementalIndex retVal = new OnheapIncrementalIndex(schema, true, 10000);
 
-    final AtomicLong startTime = new AtomicLong();
-    int lineCount;
     try {
-      lineCount = source.readLines(
-          new LineProcessor<Integer>()
-          {
-            StringInputRowParser parser = new StringInputRowParser(
-                new DelimitedParseSpec(
-                    new TimestampSpec("ts", "iso", null),
-                    new DimensionsSpec(Arrays.asList(DIMENSIONS), null, null),
-                    "\t",
-                    "\u0001",
-                    Arrays.asList(COLUMNS)
-                )
-            );
-            boolean runOnce = false;
-            int lineCount = 0;
-
-            @Override
-            public boolean processLine(String line) throws IOException
-            {
-              if (!runOnce) {
-                startTime.set(System.currentTimeMillis());
-                runOnce = true;
-              }
-              retVal.add(parser.parse(line));
-
-              ++lineCount;
-              return true;
-            }
-
-            @Override
-            public Integer getResult()
-            {
-              return lineCount;
-            }
-          }
-      );
+      return loadIncrementalIndex(retVal, source);
     }
-    catch (IOException e) {
+    catch (Exception e) {
       realtimeIndex = null;
       throw Throwables.propagate(e);
     }
+  }
+
+  public static IncrementalIndex loadIncrementalIndex(
+      final IncrementalIndex retVal,
+      final CharSource source
+  ) throws IOException
+  {
+    final StringInputRowParser parser = new StringInputRowParser(
+        new DelimitedParseSpec(
+            new TimestampSpec("ts", "iso", null),
+            new DimensionsSpec(DimensionsSpec.getDefaultSchemas(Arrays.asList(DIMENSIONS)), null, null),
+            "\t",
+            "\u0001",
+            Arrays.asList(COLUMNS)
+        )
+        , "utf8"
+    );
+    return loadIncrementalIndex(retVal, source, parser);
+  }
+
+  public static IncrementalIndex loadIncrementalIndex(
+      final IncrementalIndex retVal,
+      final CharSource source,
+      final StringInputRowParser parser
+  ) throws IOException
+  {
+    final AtomicLong startTime = new AtomicLong();
+    int lineCount = source.readLines(
+        new LineProcessor<Integer>()
+        {
+          boolean runOnce = false;
+          int lineCount = 0;
+
+          @Override
+          public boolean processLine(String line) throws IOException
+          {
+            if (!runOnce) {
+              startTime.set(System.currentTimeMillis());
+              runOnce = true;
+            }
+            retVal.add(parser.parse(line));
+
+            ++lineCount;
+            return true;
+          }
+
+          @Override
+          public Integer getResult()
+          {
+            return lineCount;
+          }
+        }
+    );
 
     log.info("Loaded %,d lines in %,d millis.", lineCount, System.currentTimeMillis() - startTime.get());
 

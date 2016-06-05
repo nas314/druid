@@ -53,7 +53,9 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
     CARDINALITY,
     SIZE,
     INTERVAL,
-    AGGREGATORS;
+    AGGREGATORS,
+    MINMAX,
+    QUERYGRANULARITY;
 
     @JsonValue
     @Override
@@ -81,7 +83,8 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
   public static final EnumSet<AnalysisType> DEFAULT_ANALYSIS_TYPES = EnumSet.of(
       AnalysisType.CARDINALITY,
       AnalysisType.SIZE,
-      AnalysisType.INTERVAL
+      AnalysisType.INTERVAL,
+      AnalysisType.MINMAX
   );
 
   private final ColumnIncluderator toInclude;
@@ -177,6 +180,16 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
     return analysisTypes.contains(AnalysisType.AGGREGATORS);
   }
 
+  public boolean hasQueryGranularity()
+  {
+    return analysisTypes.contains(AnalysisType.QUERYGRANULARITY);
+  }
+
+  public boolean hasMinMax()
+  {
+    return analysisTypes.contains(AnalysisType.MINMAX);
+  }
+
   public byte[] getAnalysisTypesCacheKey()
   {
     int size = 1;
@@ -234,6 +247,20 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
         dataSource,
         getQuerySegmentSpec(),
         toInclude,
+        merge,
+        getContext(),
+        analysisTypes,
+        usingDefaultInterval,
+        lenientAggregatorMerge
+    );
+  }
+
+  public Query<SegmentAnalysis> withColumns(ColumnIncluderator includerator)
+  {
+    return new SegmentMetadataQuery(
+        getDataSource(),
+        getQuerySegmentSpec(),
+        includerator,
         merge,
         getContext(),
         analysisTypes,

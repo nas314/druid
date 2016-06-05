@@ -51,17 +51,17 @@ If there is no match, it returns the dimension value as is.
 ```json
 {
   "type" : "regex", "expr" : <regular_expression>,
-  "replaceMissingValues" : true,
-  "replaceMissingValuesWith" : "foobar"
+  "replaceMissingValue" : true,
+  "replaceMissingValueWith" : "foobar"
 }
 ```
 
 For example, using `"expr" : "(\\w\\w\\w).*"` will transform
 `'Monday'`, `'Tuesday'`, `'Wednesday'` into `'Mon'`, `'Tue'`, `'Wed'`.
 
-If the `replaceMissingValues` property is true, the extraction function will transform dimension values that do not match the regex pattern to a user-specified String. Default value is `false`.
+If the `replaceMissingValue` property is true, the extraction function will transform dimension values that do not match the regex pattern to a user-specified String. Default value is `false`.
 
-The `replaceMissingValuesWith` property sets the String that unmatched dimension values will be replaced with, if `replaceMissingValues` is true. If `replaceMissingValuesWith` is not specified, unmatched dimension values will be replaced with nulls.
+The `replaceMissingValueWith` property sets the String that unmatched dimension values will be replaced with, if `replaceMissingValue` is true. If `replaceMissingValueWith` is not specified, unmatched dimension values will be replaced with nulls.
 
 For example, if `expr` is `"(a\w+)"` in the example JSON above, a regex that matches words starting with the letter `a`, the extraction function will convert a dimension value like `banana` to `foobar`.
 
@@ -252,14 +252,14 @@ It is illegal to set `retainMissingValue = true` and also specify a `replaceMiss
 
 A property of `injective` specifies if optimizations can be used which assume there is no combining of multiple names into one. For example: If ABC123 is the only key that maps to SomeCompany, that can be optimized since it is a unique lookup. But if both ABC123 and DEF456 BOTH map to SomeCompany, then that is NOT a unique lookup. Setting this value to true and setting `retainMissingValue` to FALSE (the default) may cause undesired behavior.
 
-A property `optimize` can be supplied to allow optimization of lookup based extraction filter (by default `optimize = false`). 
+A property `optimize` can be supplied to allow optimization of lookup based extraction filter (by default `optimize = true`). 
 The optimization layer will run on the broker and it will rewrite the extraction filter as clause of selector filters.
 For instance the following filter 
 
 ```json
 {
     "filter": {
-        "type": "extraction",
+        "type": "selector",
         "dimension": "product",
         "value": "bar_1",
         "extractionFn": {
@@ -308,6 +308,26 @@ This allows distinguishing between a null dimension and a lookup resulting in a 
 For example, specifying `{"":"bar","bat":"baz"}` with dimension values `[null, "foo", "bat"]` and replacing missing values with `"oof"` will yield results of `["bar", "oof", "baz"]`.
 Omitting the empty string key will cause the missing value to take over. For example, specifying `{"bat":"baz"}` with dimension values `[null, "foo", "bat"]` and replacing missing values with `"oof"` will yield results of `["oof", "oof", "baz"]`.
 
+### Registered Lookup Extraction Function
+
+While it is recommended that the [lookup dimension spec](#lookup-dimensionspecs) be used whenever possible, any lookup that is registered for use as a lookup dimension spec can be used as a dimension extraction.
+
+The specification for dimension extraction using dimension specification named lookups is formatted as per the following example:
+
+```json
+{
+  "type":"registeredLookup",
+  "lookup":"some_lookup_name",
+  "retainMissingValue":true,
+  "injective":false
+}
+```
+
+All the flags for [lookup extraction function](#lookup-extraction-function) apply here as well.
+
+In general, the dimension specification should be used. This dimension **extraction** implementation is made available for testing, validation, and transitioning from dimension extraction to the dimension specification style lookups.
+There is also a chance that a feature uses dimension extraction in such a way that it is not applied to dimension specification lookups. Such a scenario should be brought to the attention of the development mailing list.
+
 ### Cascade Extraction Function
 
 Provides chained execution of extraction functions.
@@ -323,8 +343,8 @@ Example for chaining [regular expression extraction function](#regular-expressio
     { 
       "type" : "regex", 
       "expr" : "/([^/]+)/", 
-      "replaceMissingValues": false, 
-      "replaceMissingValuesWith": null
+      "replaceMissingValue": false,
+      "replaceMissingValueWith": null
     },
     { 
       "type" : "javascript", 
@@ -346,19 +366,19 @@ For example, `'/druid/prod/historical'` is transformed to `'the dru'` as regular
 Returns the dimension value formatted according to the given format string.
 
 ```json
-{ "type" : "stringFormat", "format" : <sprintf_expression> }
+{ "type" : "stringFormat", "format" : <sprintf_expression>, "nullHandling" : <optional attribute for handling null value> }
 ```
 
-For example if you want to concat "[" and "]" before and after the actual dimension value, you need to specify "[%s]" as format string.
+For example if you want to concat "[" and "]" before and after the actual dimension value, you need to specify "[%s]" as format string. "nullHandling" can be one of `nullString`, `emptyString` or `returnNull`. With "[%s]" format, each configuration will result `[null]`, `[]`, `null`. Default is `nullString`.
 
-### Filtering DimensionSpecs
+### Filtered DimensionSpecs
 
-These are only valid for multi-valued dimensions. If you have a row in druid that has a multi-valued dimension with values ["v1", "v2", "v3"] and you send a groupBy/topN query grouping by that dimension with [query filter](filter.html) for value "v1". In the response you will get 3 rows containing "v1", "v2" and "v3". This behavior might be unintuitive for some use cases.
+These are only valid for multi-value dimensions. If you have a row in druid that has a multi-value dimension with values ["v1", "v2", "v3"] and you send a groupBy/topN query grouping by that dimension with [query filter](filters.html) for value "v1". In the response you will get 3 rows containing "v1", "v2" and "v3". This behavior might be unintuitive for some use cases.
 
-It happens because `query filter` is internally used on the bitmaps and only used to match the row to be included in the query result processing. With multivalued dimensions, "query filter" behaves like a contains check, which will match the row with dimension value ["v1", "v2", "v3"]. Please see the section on "Multi-value columns" in [segment](../design/segments.html) for more details.
-Then groupBy/topN processing pipeline "explodes" all multi-valued dimensions resulting 3 rows for "v1", "v2" and "v3" each.
+It happens because "query filter" is internally used on the bitmaps and only used to match the row to be included in the query result processing. With multi-value dimensions, "query filter" behaves like a contains check, which will match the row with dimension value ["v1", "v2", "v3"]. Please see the section on "Multi-value columns" in [segment](../design/segments.html) for more details.
+Then groupBy/topN processing pipeline "explodes" all multi-value dimensions resulting 3 rows for "v1", "v2" and "v3" each.
 
-In addition to "query filter" which efficiently selects the rows to be processed, you can use the filtering dimension spec to filter for specific values within the values of a multi-valued dimension. These dimensionSpecs take a delegate DimensionSpec and a filtering criteria. From the "exploded" rows, only rows matching the given filtering criteria are returned in the query result.
+In addition to "query filter" which efficiently selects the rows to be processed, you can use the filtered dimension spec to filter for specific values within the values of a multi-value dimension. These dimensionSpecs take a delegate DimensionSpec and a filtering criteria. From the "exploded" rows, only rows matching the given filtering criteria are returned in the query result.
 
 The following filtered dimension spec acts as a whitelist or blacklist for values as per the "isWhitelist" attribute value.
 
@@ -372,7 +392,7 @@ Following filtered dimension spec retains only the values matching regex. Note t
 { "type" : "regexFiltered", "delegate" : <dimensionSpec>, "pattern": <java regex pattern> }
 ```
 
-For more details and examples, see [multi-valued dimensions](multi-valued-dimensions.html).
+For more details and examples, see [multi-value dimensions](multi-value-dimensions.html).
 
 ### Upper and Lower extraction functions.
 
@@ -391,5 +411,47 @@ or without setting "locale" (in this case, the current value of the default loca
 ```json
 {
   "type" : "lower"
+}
+```
+
+### Lookup DimensionSpecs
+
+<div class="note caution">
+Lookups are an <a href="../development/experimental.html">experimental</a> feature.
+</div>
+
+Lookup DimensionSpecs can be used to define directly a lookup implementation as dimension spec.
+Generally speaking there is two different kind of lookups implementations. 
+The first kind is passed at the query time like `map` implementation.
+
+```json
+{ 
+  "type":"lookup",
+  "dimension":"dimensionName",
+  "outputName":"dimensionOutputName",
+  "replaceMissingValueWith":"missing_value",
+  "retainMissingValue":false,
+  "lookup":{"type": "map", "map":{"key":"value"}, "isOneToOne":false}
+}
+```
+
+A property of `retainMissingValue` and `replaceMissingValueWith` can be specified at query time to hint how to handle missing values. Setting `replaceMissingValueWith` to `""` has the same effect as setting it to `null` or omitting the property. 
+Setting `retainMissingValue` to true will use the dimension's original value if it is not found in the lookup. 
+The default values are `replaceMissingValueWith = null` and `retainMissingValue = false` which causes missing values to be treated as missing.
+ 
+It is illegal to set `retainMissingValue = true` and also specify a `replaceMissingValueWith`.
+
+A property of `injective` specifies if optimizations can be used which assume there is no combining of multiple names into one. For example: If ABC123 is the only key that maps to SomeCompany, that can be optimized since it is a unique lookup. But if both ABC123 and DEF456 BOTH map to SomeCompany, then that is NOT a unique lookup. Setting this value to true and setting `retainMissingValue` to FALSE (the default) may cause undesired behavior.
+
+A property `optimize` can be supplied to allow optimization of lookup based extraction filter (by default `optimize = true`).
+
+The second kind where it is not possible to pass at query time due to their size, will be based on an external lookup table or resource that is already registered via configuration file or/and coordinator.
+
+```json
+{ 
+  "type":"lookup"
+  "dimension":"dimensionName"
+  "outputName":"dimensionOutputName"
+  "name":"lookupName"
 }
 ```

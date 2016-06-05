@@ -60,14 +60,18 @@ import io.druid.indexing.overlord.TaskMaster;
 import io.druid.indexing.overlord.TaskRunnerFactory;
 import io.druid.indexing.overlord.TaskStorage;
 import io.druid.indexing.overlord.TaskStorageQueryAdapter;
+import io.druid.indexing.overlord.WorkerTaskRunner;
+import io.druid.indexing.overlord.autoscaling.PendingTaskBasedWorkerResourceManagementConfig;
+import io.druid.indexing.overlord.autoscaling.PendingTaskBasedWorkerResourceManagementStrategy;
 import io.druid.indexing.overlord.autoscaling.ResourceManagementSchedulerConfig;
 import io.druid.indexing.overlord.autoscaling.ResourceManagementStrategy;
-import io.druid.indexing.overlord.autoscaling.SimpleResourceManagementConfig;
-import io.druid.indexing.overlord.autoscaling.SimpleResourceManagementStrategy;
+import io.druid.indexing.overlord.autoscaling.SimpleWorkerResourceManagementConfig;
+import io.druid.indexing.overlord.autoscaling.SimpleWorkerResourceManagementStrategy;
 import io.druid.indexing.overlord.config.TaskQueueConfig;
 import io.druid.indexing.overlord.http.OverlordRedirectInfo;
 import io.druid.indexing.overlord.http.OverlordResource;
 import io.druid.indexing.overlord.setup.WorkerBehaviorConfig;
+import io.druid.indexing.overlord.supervisor.SupervisorResource;
 import io.druid.indexing.worker.config.WorkerConfig;
 import io.druid.segment.realtime.firehose.ChatHandlerProvider;
 import io.druid.server.audit.AuditManagerProvider;
@@ -143,8 +147,8 @@ public class CliOverlord extends ServerRunnable
             binder.bind(ChatHandlerProvider.class).toProvider(Providers.<ChatHandlerProvider>of(null));
 
             configureTaskStorage(binder);
-            configureRunners(binder);
             configureAutoscale(binder);
+            configureRunners(binder);
 
             binder.bind(AuditManager.class)
                   .toProvider(AuditManagerProvider.class)
@@ -155,6 +159,7 @@ public class CliOverlord extends ServerRunnable
 
             binder.bind(JettyServerInitializer.class).toInstance(new OverlordJettyServerInitializer());
             Jerseys.addResource(binder, OverlordResource.class);
+            Jerseys.addResource(binder, SupervisorResource.class);
 
             LifecycleModule.register(binder, Server.class);
           }
@@ -197,7 +202,7 @@ public class CliOverlord extends ServerRunnable
             biddy.addBinding("local").to(ForkingTaskRunnerFactory.class);
             binder.bind(ForkingTaskRunnerFactory.class).in(LazySingleton.class);
 
-            biddy.addBinding("remote").to(RemoteTaskRunnerFactory.class).in(LazySingleton.class);
+            biddy.addBinding(RemoteTaskRunnerFactory.TYPE_NAME).to(RemoteTaskRunnerFactory.class).in(LazySingleton.class);
             binder.bind(RemoteTaskRunnerFactory.class).in(LazySingleton.class);
 
             JacksonConfigProvider.bind(binder, WorkerBehaviorConfig.CONFIG_KEY, WorkerBehaviorConfig.class, null);
@@ -206,11 +211,26 @@ public class CliOverlord extends ServerRunnable
           private void configureAutoscale(Binder binder)
           {
             JsonConfigProvider.bind(binder, "druid.indexer.autoscale", ResourceManagementSchedulerConfig.class);
-            binder.bind(ResourceManagementStrategy.class)
-                  .to(SimpleResourceManagementStrategy.class)
-                  .in(LazySingleton.class);
+            JsonConfigProvider.bind(
+                binder,
+                "druid.indexer.autoscale",
+                PendingTaskBasedWorkerResourceManagementConfig.class
+            );
+            JsonConfigProvider.bind(binder, "druid.indexer.autoscale", SimpleWorkerResourceManagementConfig.class);
 
-            JsonConfigProvider.bind(binder, "druid.indexer.autoscale", SimpleResourceManagementConfig.class);
+            PolyBind.createChoice(
+                binder,
+                "druid.indexer.autoscale.strategy.type",
+                Key.get(ResourceManagementStrategy.class),
+                Key.get(SimpleWorkerResourceManagementStrategy.class)
+            );
+            final MapBinder<String, ResourceManagementStrategy> biddy = PolyBind.optionBinder(
+                binder,
+                Key.get(ResourceManagementStrategy.class)
+            );
+            biddy.addBinding("simple").to(SimpleWorkerResourceManagementStrategy.class);
+            biddy.addBinding("pendingTaskBased").to(PendingTaskBasedWorkerResourceManagementStrategy.class);
+
           }
         },
         new IndexingServiceFirehoseModule(),

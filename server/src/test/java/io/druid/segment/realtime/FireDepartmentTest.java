@@ -28,7 +28,7 @@ import io.druid.data.input.impl.DimensionsSpec;
 import io.druid.data.input.impl.JSONParseSpec;
 import io.druid.data.input.impl.StringInputRowParser;
 import io.druid.data.input.impl.TimestampSpec;
-import io.druid.granularity.QueryGranularity;
+import io.druid.granularity.QueryGranularities;
 import io.druid.jackson.DefaultObjectMapper;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.CountAggregatorFactory;
@@ -41,6 +41,7 @@ import io.druid.segment.realtime.plumber.RealtimePlumberSchool;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.Arrays;
 import java.util.Map;
 
@@ -82,7 +83,7 @@ public class FireDepartmentTest
                             null
                         ),
                         new DimensionsSpec(
-                            Arrays.asList("dim1", "dim2"),
+                            DimensionsSpec.getDefaultSchemas(Arrays.asList("dim1", "dim2")),
                             null,
                             null
                         )
@@ -93,7 +94,7 @@ public class FireDepartmentTest
             new AggregatorFactory[]{
                 new CountAggregatorFactory("count")
             },
-            new UniformGranularitySpec(Granularity.HOUR, QueryGranularity.MINUTE, null),
+            new UniformGranularitySpec(Granularity.HOUR, QueryGranularities.MINUTE, null),
             jsonMapper
         ),
         new RealtimeIOConfig(
@@ -116,9 +117,7 @@ public class FireDepartmentTest
             ),
             null
         ),
-        new RealtimeTuningConfig(
-            null, null, null, null, null, null, null, null, null, null, 0, 0
-        )
+        RealtimeTuningConfig.makeDefaultTuningConfig(new File("/tmp/nonexistent"))
     );
 
     String json = jsonMapper.writeValueAsString(schema);
@@ -126,5 +125,6 @@ public class FireDepartmentTest
     FireDepartment newSchema = jsonMapper.readValue(json, FireDepartment.class);
 
     Assert.assertEquals(schema.getDataSchema().getDataSource(), newSchema.getDataSchema().getDataSource());
+    Assert.assertEquals("/tmp/nonexistent", schema.getTuningConfig().getBasePersistDirectory().toString());
   }
 }

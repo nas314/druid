@@ -33,6 +33,8 @@ import com.metamx.common.guava.Sequence;
 import com.metamx.common.guava.Sequences;
 import io.druid.collections.StupidPool;
 import io.druid.granularity.QueryGranularity;
+import io.druid.granularity.QueryGranularities;
+import io.druid.js.JavaScriptConfig;
 import io.druid.query.BySegmentResultValue;
 import io.druid.query.BySegmentResultValueClass;
 import io.druid.query.Druids;
@@ -46,12 +48,13 @@ import io.druid.query.aggregation.DoubleMinAggregatorFactory;
 import io.druid.query.aggregation.FilteredAggregatorFactory;
 import io.druid.query.aggregation.PostAggregator;
 import io.druid.query.aggregation.cardinality.CardinalityAggregatorFactory;
+import io.druid.query.aggregation.hyperloglog.HyperUniqueFinalizingPostAggregator;
 import io.druid.query.aggregation.hyperloglog.HyperUniquesAggregatorFactory;
 import io.druid.query.dimension.ExtractionDimensionSpec;
 import io.druid.query.extraction.DimExtractionFn;
 import io.druid.query.extraction.ExtractionFn;
 import io.druid.query.extraction.JavaScriptExtractionFn;
-import io.druid.query.extraction.LookupExtractionFn;
+import io.druid.query.lookup.LookupExtractionFn;
 import io.druid.query.extraction.MapLookupExtractor;
 import io.druid.query.extraction.RegexDimExtractionFn;
 import io.druid.query.extraction.TimeFormatExtractionFn;
@@ -376,17 +379,17 @@ public class TopNQueryRunnerTest
             new TopNResultValue(
                 Arrays.<Map<String, Object>>asList(
                     ImmutableMap.<String, Object>builder()
-                                .put("market", "total_market")
-                                .put("uniques", 0)
-                                .build(),
+                        .put("market", "spot")
+                        .put("uniques", 0)
+                        .build(),
                     ImmutableMap.<String, Object>builder()
-                                .put("market", "spot")
-                                .put("uniques", 0)
-                                .build(),
+                        .put("market", "total_market")
+                        .put("uniques", 0)
+                        .build(),
                     ImmutableMap.<String, Object>builder()
-                                .put("market", "upfront")
-                                .put("uniques", 0)
-                                .build()
+                        .put("market", "upfront")
+                        .put("uniques", 0)
+                        .build()
                 )
             )
         )
@@ -394,6 +397,53 @@ public class TopNQueryRunnerTest
     assertExpectedResults(expectedResults, query);
   }
 
+  @Test
+  public void testTopNOverHyperUniqueFinalizingPostAggregator()
+  {
+    TopNQuery query = new TopNQueryBuilder()
+        .dataSource(QueryRunnerTestHelper.dataSource)
+        .granularity(QueryRunnerTestHelper.allGran)
+        .dimension(QueryRunnerTestHelper.marketDimension)
+        .metric(QueryRunnerTestHelper.hyperUniqueFinalizingPostAggMetric)
+        .threshold(3)
+        .intervals(QueryRunnerTestHelper.fullOnInterval)
+        .aggregators(
+            Arrays.<AggregatorFactory>asList(QueryRunnerTestHelper.qualityUniques)
+        )
+        .postAggregators(
+            Arrays.<PostAggregator>asList(new HyperUniqueFinalizingPostAggregator(
+                QueryRunnerTestHelper.hyperUniqueFinalizingPostAggMetric,
+                QueryRunnerTestHelper.uniqueMetric
+            ))
+        )
+        .build();
+
+    List<Result<TopNResultValue>> expectedResults = Arrays.asList(
+        new Result<>(
+            new DateTime("2011-01-12T00:00:00.000Z"),
+            new TopNResultValue(
+                Arrays.<Map<String, Object>>asList(
+                    ImmutableMap.<String, Object>builder()
+                        .put("market", "spot")
+                        .put(QueryRunnerTestHelper.uniqueMetric, QueryRunnerTestHelper.UNIQUES_9)
+                        .put(QueryRunnerTestHelper.hyperUniqueFinalizingPostAggMetric, QueryRunnerTestHelper.UNIQUES_9)
+                        .build(),
+                    ImmutableMap.<String, Object>builder()
+                        .put("market", "total_market")
+                        .put(QueryRunnerTestHelper.uniqueMetric, QueryRunnerTestHelper.UNIQUES_2)
+                        .put(QueryRunnerTestHelper.hyperUniqueFinalizingPostAggMetric, QueryRunnerTestHelper.UNIQUES_2)
+                        .build(),
+                    ImmutableMap.<String, Object>builder()
+                        .put("market", "upfront")
+                        .put(QueryRunnerTestHelper.uniqueMetric, QueryRunnerTestHelper.UNIQUES_2)
+                        .put(QueryRunnerTestHelper.hyperUniqueFinalizingPostAggMetric, QueryRunnerTestHelper.UNIQUES_2)
+                        .build()
+                )
+            )
+        )
+    );
+    assertExpectedResults(expectedResults, query);
+  }
 
   @Test
   public void testTopNBySegment()
@@ -1460,7 +1510,7 @@ public class TopNQueryRunnerTest
             new ExtractionDimensionSpec(
                 QueryRunnerTestHelper.marketDimension,
                 QueryRunnerTestHelper.marketDimension,
-                new JavaScriptExtractionFn("function(f) { return \"POTATO\"; }", false),
+                new JavaScriptExtractionFn("function(f) { return \"POTATO\"; }", false, JavaScriptConfig.getDefault()),
                 null
             )
         )
@@ -1471,7 +1521,7 @@ public class TopNQueryRunnerTest
         .postAggregators(Arrays.<PostAggregator>asList(QueryRunnerTestHelper.addRowsIndexConstant))
         .build();
 
-    QueryGranularity gran = QueryGranularity.DAY;
+    QueryGranularity gran = QueryGranularities.DAY;
     TimeseriesQuery tsQuery = Druids.newTimeseriesQueryBuilder()
                                     .dataSource(QueryRunnerTestHelper.dataSource)
                                     .granularity(gran)
@@ -1629,7 +1679,8 @@ public class TopNQueryRunnerTest
                             "spot", "2spot0",
                             "total_market", "1total_market0",
                             "upfront", "3upfront0"
-                        )
+                        ),
+                        false
                     ), false, "MISSING", true,
                     false
                 ),
@@ -1693,7 +1744,8 @@ public class TopNQueryRunnerTest
                             "spot", "2spot0",
                             "total_market", "1total_market0",
                             "upfront", "3upfront0"
-                        )
+                        ),
+                        false
                     ), false, "MISSING", false,
                     false
                 ),
@@ -1758,7 +1810,8 @@ public class TopNQueryRunnerTest
                             "spot", "2spot0",
                             "total_market", "1total_market0",
                             "upfront", "3upfront0"
-                        )
+                        ),
+                        false
                     ), true, null, true,
                     false
                 ),
@@ -1825,7 +1878,8 @@ public class TopNQueryRunnerTest
                             "total_market0",
                             "upfront",
                             "upfront0"
-                        )
+                        ),
+                        false
                     ), true, null, false,
                     false
                 ),
@@ -1891,7 +1945,8 @@ public class TopNQueryRunnerTest
                             "3total_market",
                             "upfront",
                             "1upfront"
-                        )
+                        ),
+                        false
                     ), true, null, true,
                     false
                 ),
@@ -1957,7 +2012,8 @@ public class TopNQueryRunnerTest
                             "3total_market",
                             "upfront",
                             "1upfront"
-                        )
+                        ),
+                        false
                     ), true, null, false,
                     false
                 ),
@@ -2024,7 +2080,8 @@ public class TopNQueryRunnerTest
                             "3total_market",
                             "upfront",
                             "1upfront"
-                        )
+                        ),
+                        false
                     ), true, null, true,
                     false
                 ),
@@ -2987,7 +3044,7 @@ public class TopNQueryRunnerTest
         .granularity(QueryRunnerTestHelper.allGran)
         .dimension("null_column")
         .filters(
-            new SelectorDimFilter("null_column", null)
+            new SelectorDimFilter("null_column", null, null)
         )
         .metric(QueryRunnerTestHelper.indexMetric)
         .threshold(4)
@@ -3032,7 +3089,7 @@ public class TopNQueryRunnerTest
   {
     TopNQuery query = new TopNQueryBuilder()
         .dataSource(QueryRunnerTestHelper.dataSource)
-        .granularity(QueryGranularity.ALL)
+        .granularity(QueryGranularities.ALL)
         .dimension("partial_null_column")
         .metric(QueryRunnerTestHelper.uniqueMetric)
         .threshold(1000)
@@ -3069,10 +3126,10 @@ public class TopNQueryRunnerTest
   {
     TopNQuery query = new TopNQueryBuilder()
         .dataSource(QueryRunnerTestHelper.dataSource)
-        .granularity(QueryGranularity.ALL)
+        .granularity(QueryGranularities.ALL)
         .dimension("partial_null_column")
         .metric(QueryRunnerTestHelper.uniqueMetric)
-        .filters(new SelectorDimFilter("partial_null_column", null))
+        .filters(new SelectorDimFilter("partial_null_column", null, null))
         .threshold(1000)
         .intervals(QueryRunnerTestHelper.firstToThird)
         .aggregators(QueryRunnerTestHelper.commonAggregators)
@@ -3101,10 +3158,10 @@ public class TopNQueryRunnerTest
   {
     TopNQuery query = new TopNQueryBuilder()
         .dataSource(QueryRunnerTestHelper.dataSource)
-        .granularity(QueryGranularity.ALL)
+        .granularity(QueryGranularities.ALL)
         .dimension("partial_null_column")
         .metric(QueryRunnerTestHelper.uniqueMetric)
-        .filters(new SelectorDimFilter("partial_null_column", "value"))
+        .filters(new SelectorDimFilter("partial_null_column", "value", null))
         .threshold(1000)
         .intervals(QueryRunnerTestHelper.firstToThird)
         .aggregators(QueryRunnerTestHelper.commonAggregators)
@@ -3133,7 +3190,7 @@ public class TopNQueryRunnerTest
   {
     TopNQuery query = new TopNQueryBuilder()
         .dataSource(QueryRunnerTestHelper.dataSource)
-        .granularity(QueryGranularity.ALL)
+        .granularity(QueryGranularities.ALL)
         .dimension(QueryRunnerTestHelper.marketDimension)
         .metric(new AlphaNumericTopNMetricSpec(null))
         .threshold(2)
@@ -3165,7 +3222,7 @@ public class TopNQueryRunnerTest
   {
     Map<String, String> extractionMap = new HashMap<>();
     extractionMap.put("spot", "spot0");
-    MapLookupExtractor mapLookupExtractor = new MapLookupExtractor(extractionMap);
+    MapLookupExtractor mapLookupExtractor = new MapLookupExtractor(extractionMap, false);
     LookupExtractionFn lookupExtractionFn = new LookupExtractionFn(mapLookupExtractor, false, null, true, false);
 
     TopNQuery query = new TopNQueryBuilder().dataSource(QueryRunnerTestHelper.dataSource)
@@ -3215,7 +3272,7 @@ public class TopNQueryRunnerTest
     Map<String, String> extractionMap = new HashMap<>();
     extractionMap.put("", "NULL");
 
-    MapLookupExtractor mapLookupExtractor = new MapLookupExtractor(extractionMap);
+    MapLookupExtractor mapLookupExtractor = new MapLookupExtractor(extractionMap, false);
     LookupExtractionFn lookupExtractionFn = new LookupExtractionFn(mapLookupExtractor, false, null, true, false);
     DimFilter extractionFilter = new ExtractionDimFilter("null_column", "NULL", lookupExtractionFn, null);
     TopNQueryBuilder topNQueryBuilder = new TopNQueryBuilder()
@@ -3284,7 +3341,7 @@ public class TopNQueryRunnerTest
     Map<String, String> extractionMap = new HashMap<>();
     extractionMap.put("","NULL");
 
-    MapLookupExtractor mapLookupExtractor = new MapLookupExtractor(extractionMap);
+    MapLookupExtractor mapLookupExtractor = new MapLookupExtractor(extractionMap, false);
     LookupExtractionFn lookupExtractionFn = new LookupExtractionFn(mapLookupExtractor, false, null, true, true);
     DimFilter extractionFilter = new ExtractionDimFilter("null_column", "NULL", lookupExtractionFn, null);
     TopNQueryBuilder topNQueryBuilder = new TopNQueryBuilder()

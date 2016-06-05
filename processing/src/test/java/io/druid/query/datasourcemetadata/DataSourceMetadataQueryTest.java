@@ -27,7 +27,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
 import com.metamx.common.guava.Sequences;
 import io.druid.data.input.MapBasedInputRow;
-import io.druid.granularity.QueryGranularity;
+import io.druid.granularity.QueryGranularities;
 import io.druid.jackson.DefaultObjectMapper;
 import io.druid.query.Druids;
 import io.druid.query.Query;
@@ -81,7 +81,7 @@ public class DataSourceMetadataQueryTest
                                                         "useCache",
                                                         true,
                                                         "populateCache",
-                                                        true,
+                                                        "true",
                                                         "finalize",
                                                         true
                                                     )
@@ -101,15 +101,18 @@ public class DataSourceMetadataQueryTest
 
     Assert.assertEquals(1, serdeQuery.getContextValue("priority"));
     Assert.assertEquals(true, serdeQuery.getContextValue("useCache"));
-    Assert.assertEquals(true, serdeQuery.getContextValue("populateCache"));
+    Assert.assertEquals("true", serdeQuery.getContextValue("populateCache"));
     Assert.assertEquals(true, serdeQuery.getContextValue("finalize"));
+    Assert.assertEquals(true, serdeQuery.getContextBoolean("useCache", false));
+    Assert.assertEquals(true, serdeQuery.getContextBoolean("populateCache", false));
+    Assert.assertEquals(true, serdeQuery.getContextBoolean("finalize", false));
   }
 
   @Test
   public void testMaxIngestedEventTime() throws Exception
   {
     final IncrementalIndex rtIndex = new OnheapIncrementalIndex(
-        0L, QueryGranularity.NONE, new AggregatorFactory[]{new CountAggregatorFactory("count")}, 1000
+        0L, QueryGranularities.NONE, new AggregatorFactory[]{new CountAggregatorFactory("count")}, 1000
     );
     ;
     final QueryRunner runner = QueryRunnerTestHelper.makeQueryRunner(

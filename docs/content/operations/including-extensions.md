@@ -1,61 +1,71 @@
 ---
 layout: doc_page
 ---
-# Including Extensions
 
-Druid uses a module system that allows for the addition of extensions at runtime.
+# Loading extensions
 
-## Specifying extensions
+## Loading core extensions
 
-Druid extensions can be specified in the `common.runtime.properties`. There are two ways of adding druid extensions currently.
-
-### Add to the classpath
-
-If you add your extension jar to the classpath at runtime, Druid will load it into the system.  This mechanism is relatively easy to reason about, but it also means that you have to ensure that all dependency jars on the classpath are compatible.  That is, Druid makes no provisions while using this method to maintain class loader isolation so you must make sure that the jars on your classpath are mutually compatible.
-
-### Add to the extension directory
-
-If you don't want to fiddle with classpath, you can create an extension directory and tell Druid to load extensions from there.
-
-To let Druid load your extensions, follow the steps below
-
-1) Specify `druid.extensions.directory` (root directory for normal Druid extensions). If you don't specify it, Druid will use the default value, see [Configuration](../configuration/index.html).
-
-2) Under the root extension directory, create sub-directories for each extension you might want to load.  Inside each sub-directory, put extension-related files.  (If you don't want to manually set up the extension directory, you can use Druid's [pull-deps](../pull-deps.html) tool to help you generate these directories automatically.)
-
-Example:
-
-Suppose you specify `druid.extensions.directory=/usr/local/druid/extensions`, and want Druid to load normal extensions ```druid-kafka-eight``` and ```mysql-metadata-storage```.
-
-Then under ```extensions```, it should look like this,
+Druid bundles all [core extensions](../development/extensions.html#core-extensions) out of the box. 
+See the [list of extensions](../development/extensions.html#core-extensions) for your options. You 
+can load bundled extensions by adding their names to your common.runtime.properties 
+`druid.extensions.loadList` property. For example, to load the *postgresql-metadata-storage* and 
+*druid-hdfs-storage* extensions, use the configuration:
 
 ```
-extensions/
-├── druid-kafka-eight
-│   ├── druid-kafka-eight-0.7.3.jar
-│   ├── jline-0.9.94.jar
-│   ├── jopt-simple-3.2.jar
-│   ├── kafka-clients-0.8.2.1.jar
-│   ├── kafka_2.10-0.8.2.1.jar
-│   ├── log4j-1.2.16.jar
-│   ├── lz4-1.3.0.jar
-│   ├── metrics-core-2.2.0.jar
-│   ├── netty-3.7.0.Final.jar
-│   ├── scala-library-2.10.4.jar
-│   ├── slf4j-log4j12-1.6.1.jar
-│   ├── snappy-java-1.1.1.6.jar
-│   ├── zkclient-0.3.jar
-│   └── zookeeper-3.4.7.jar
-└── mysql-metadata-storage
-    ├── jdbi-2.32.jar
-    ├── mysql-connector-java-5.1.34.jar
-    └── mysql-metadata-storage-0.8.0-rc1.jar
+druid.extensions.loadList=["postgresql-metadata-storage", "druid-hdfs-storage"]
 ```
 
-As you can see, under ```extensions``` there are two sub-directories ```druid-kafka-eight``` and ```mysql-metadata-storage```, each sub-directory denotes an extension that Druid might load.
+These extensions are located in the `extensions` directory of the distribution.
 
-3) To have Druid load a specific list of extensions present under the root extension directory, set `druid.extensions.loadList` to the list of extensions to load. Using the example above, if you want Druid to load ```druid-kafka-eight``` and ```mysql-metadata-storage```, you can specify `druid.extensions.loadList=["druid-kafka-eight", "mysql-metadata-storage"]`.
+<div class="note info">
+Druid bundles two sets of configurations: one for the <a href="../tutorials/quickstart.html">quickstart</a> and 
+one for a <a href="../tutorials/cluster.html">clustered configuration</a>. Make sure you are updating the correct 
+common.runtime.properties for your setup.
+</div>
 
-If you specify `druid.extensions.loadList=[]`, Druid won't load any extensions from the file system.
+<div class="note caution">
+Because of licensing, the mysql-metadata-storage extension is not packaged with the default Druid tarball. In order to get it, you can download it from <a href="http://druid.io/downloads.html">druid.io</a>, 
+then unpack and move it into the extensions directory. Make sure to include the name of the extension in the loadList configuration.
+</div>
 
-If you don't specify `druid.extensions.loadList`, Druid will load all the extensions under the root extension directory.
+## Loading community and third-party extensions (contrib extensions)
+
+You can also load community and third-party extensions not already bundled with Druid. To do this, first download the extension and 
+then install it into your `extensions` directory. You can download extensions from their distributors directly, or 
+if they are available from Maven, the included [pull-deps](../operations/pull-deps.html) can download them for you. To use *pull-deps*, 
+specify the full Maven coordinate of the extension in the form `groupId:artifactId:version`. For example, 
+for the (hypothetical) extension *com.example:druid-example-extension:1.0.0*, run: 
+
+```
+java \
+  -cp "dist/druid/lib/*" \
+  -Ddruid.extensions.directory="extensions-tmp" \
+  -Ddruid.extensions.hadoopDependenciesDir="hadoop-dependencies-tmp" \
+  io.druid.cli.Main tools pull-deps \
+  --no-default-hadoop \
+  -c "com.example:druid-example-extension:1.0.0"
+```
+
+You can install downloaded extensions by copying them into `extensions`. For example,
+
+```
+cp -R extensions-tmp/druid-example-extension extensions/druid-example-extension
+```
+
+You only have to install the extension once. Then, add `"druid-example-extension"` to 
+`druid.extensions.loadList` in common.runtime.properties to instruct Druid to load the extension. If 
+you used *pull-deps*, then once an extension is installed, you can remove the `extensions-tmp` and 
+`hadoop-dependencies-tmp` directories that it created.
+
+<div class="note info">
+The Maven groupId for almost every <a href="../development/extensions.html#community-extensions">community extension</a> is io.druid.extensions.contrib. The artifactId is the name 
+of the extension, and the version is the latest Druid stable version.
+</div>
+
+
+## Loading extensions from classpath
+
+If you add your extension jar to the classpath at runtime, Druid will also load it into the system.  This mechanism is relatively easy to reason about, 
+but it also means that you have to ensure that all dependency jars on the classpath are compatible.  That is, Druid makes no provisions while using 
+this method to maintain class loader isolation so you must make sure that the jars on your classpath are mutually compatible.

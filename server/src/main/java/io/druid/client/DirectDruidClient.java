@@ -160,7 +160,7 @@ public class DirectDruidClient<T> implements QueryRunner<T>
     final String cancelUrl = String.format("http://%s/druid/v2/%s", host, query.getId());
 
     try {
-      log.debug("Querying url[%s]", url);
+      log.debug("Querying queryId[%s] url[%s]", query.getId(), url);
 
       final long requestStartTime = System.currentTimeMillis();
 
@@ -179,7 +179,7 @@ public class DirectDruidClient<T> implements QueryRunner<T>
         @Override
         public ClientResponse<InputStream> handleResponse(HttpResponse response)
         {
-          log.debug("Initial response from url[%s]", url);
+          log.debug("Initial response from url[%s] for queryId[%s]", url, query.getId());
           responseStartTime = System.currentTimeMillis();
           emitter.emit(builder.build("query/node/ttfb", responseStartTime - requestStartTime));
 
@@ -272,7 +272,8 @@ public class DirectDruidClient<T> implements QueryRunner<T>
         {
           long stopTime = System.currentTimeMillis();
           log.debug(
-              "Completed request to url[%s] with %,d bytes returned in %,d millis [%,f b/s].",
+              "Completed queryId[%s] request to url[%s] with %,d bytes returned in %,d millis [%,f b/s].",
+              query.getId(),
               url,
               byteCount.get(),
               stopTime - responseStartTime,
@@ -478,8 +479,14 @@ public class DirectDruidClient<T> implements QueryRunner<T>
           jp = objectMapper.getFactory().createParser(future.get());
           final JsonToken nextToken = jp.nextToken();
           if (nextToken == JsonToken.START_OBJECT) {
-            QueryInterruptedException e = jp.getCodec().readValue(jp, QueryInterruptedException.class);
-            throw e;
+            QueryInterruptedException cause = jp.getCodec().readValue(jp, QueryInterruptedException.class);
+            //case we get an exception with an unknown message.
+            if (cause.isNotKnown()) {
+              throw new QueryInterruptedException(QueryInterruptedException.UNKNOWN_EXCEPTION, cause.getMessage(), host);
+            } else {
+              throw  new QueryInterruptedException(cause, host);
+            }
+
           } else if (nextToken != JsonToken.START_ARRAY) {
             throw new IAE("Next token wasn't a START_ARRAY, was[%s] from url [%s]", jp.getCurrentToken(), url);
           } else {
@@ -491,7 +498,7 @@ public class DirectDruidClient<T> implements QueryRunner<T>
           throw new RE(e, "Failure getting results from[%s] because of [%s]", url, e.getMessage());
         }
         catch (CancellationException e) {
-          throw new QueryInterruptedException("Query cancelled");
+          throw new QueryInterruptedException(e, host);
         }
       }
     }

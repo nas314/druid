@@ -106,7 +106,7 @@ public class TimeseriesQuery extends BaseQuery<Result<TimeseriesResultValue>>
 
   public boolean isSkipEmptyBuckets()
   {
-    return Boolean.parseBoolean(getContextValue("skipEmptyBuckets", "false"));
+    return getContextBoolean("skipEmptyBuckets", false);
   }
 
   public TimeseriesQuery withQuerySegmentSpec(QuerySegmentSpec querySegmentSpec)
@@ -149,6 +149,20 @@ public class TimeseriesQuery extends BaseQuery<Result<TimeseriesResultValue>>
         aggregatorSpecs,
         postAggregatorSpecs,
         computeOverridenContext(contextOverrides)
+    );
+  }
+
+  public TimeseriesQuery withDimFilter(DimFilter dimFilter)
+  {
+    return new TimeseriesQuery(
+        getDataSource(),
+        getQuerySegmentSpec(),
+        isDescending(),
+        dimFilter,
+        granularity,
+        aggregatorSpecs,
+        postAggregatorSpecs,
+        getContext()
     );
   }
 

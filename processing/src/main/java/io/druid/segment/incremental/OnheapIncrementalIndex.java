@@ -22,6 +22,8 @@ package io.druid.segment.incremental;
 import com.google.common.base.Supplier;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.metamx.common.logger.Logger;
+import com.metamx.common.parsers.ParseException;
 import io.druid.data.input.InputRow;
 import io.druid.granularity.QueryGranularity;
 import io.druid.query.aggregation.Aggregator;
@@ -37,7 +39,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -45,8 +46,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
 {
+  private static final Logger log = new Logger(OnheapIncrementalIndex.class);
+
   private final ConcurrentHashMap<Integer, Aggregator[]> aggregators = new ConcurrentHashMap<>();
-  private final ConcurrentNavigableMap<TimeAndDims, Integer> facts;
+  private final ConcurrentMap<TimeAndDims, Integer> facts;
   private final AtomicInteger indexIncrement = new AtomicInteger(0);
   protected final int maxRowCount;
   private volatile Map<String, ColumnSelectorFactory> selectors;
@@ -56,12 +59,19 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
   public OnheapIncrementalIndex(
       IncrementalIndexSchema incrementalIndexSchema,
       boolean deserializeComplexMetrics,
+      boolean reportParseExceptions,
+      boolean sortFacts,
       int maxRowCount
   )
   {
-    super(incrementalIndexSchema, deserializeComplexMetrics);
+    super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions, sortFacts);
     this.maxRowCount = maxRowCount;
-    this.facts = new ConcurrentSkipListMap<>(dimsComparator());
+
+    if (sortFacts) {
+      this.facts = new ConcurrentSkipListMap<>(dimsComparator());
+    } else {
+      this.facts = new ConcurrentHashMap<>();
+    }
   }
 
   public OnheapIncrementalIndex(
@@ -69,6 +79,8 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
       QueryGranularity gran,
       final AggregatorFactory[] metrics,
       boolean deserializeComplexMetrics,
+      boolean reportParseExceptions,
+      boolean sortFacts,
       int maxRowCount
   )
   {
@@ -78,6 +90,8 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
                                             .withMetrics(metrics)
                                             .build(),
         deserializeComplexMetrics,
+        reportParseExceptions,
+        sortFacts,
         maxRowCount
     );
   }
@@ -95,20 +109,23 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
                                             .withMetrics(metrics)
                                             .build(),
         true,
+        true,
+        true,
         maxRowCount
     );
   }
 
   public OnheapIncrementalIndex(
       IncrementalIndexSchema incrementalIndexSchema,
+      boolean reportParseExceptions,
       int maxRowCount
   )
   {
-    this(incrementalIndexSchema, true, maxRowCount);
+    this(incrementalIndexSchema, true, reportParseExceptions, true, maxRowCount);
   }
 
   @Override
-  public ConcurrentNavigableMap<TimeAndDims, Integer> getFacts()
+  public ConcurrentMap<TimeAndDims, Integer> getFacts()
   {
     return facts;
   }
@@ -139,6 +156,7 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
   protected Integer addToFacts(
       AggregatorFactory[] metrics,
       boolean deserializeComplexMetrics,
+      boolean reportParseExceptions,
       InputRow row,
       AtomicInteger numEntries,
       TimeAndDims key,
@@ -152,17 +170,13 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
 
     if (null != priorIndex) {
       aggs = concurrentGet(priorIndex);
+      doAggregate(aggs, rowContainer, row, reportParseExceptions);
     } else {
       aggs = new Aggregator[metrics.length];
+      factorizeAggs(metrics, aggs, rowContainer, row);
+      doAggregate(aggs, rowContainer, row, reportParseExceptions);
 
-      for (int i = 0; i < metrics.length; i++) {
-        final AggregatorFactory agg = metrics[i];
-        aggs[i] = agg.factorize(
-            selectors.get(agg.getName())
-        );
-      }
       final Integer rowIndex = indexIncrement.getAndIncrement();
-
       concurrentSet(rowIndex, aggs);
 
       // Last ditch sanity checks
@@ -175,24 +189,57 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
       } else {
         // We lost a race
         aggs = concurrentGet(prev);
+        doAggregate(aggs, rowContainer, row, reportParseExceptions);
         // Free up the misfire
         concurrentRemove(rowIndex);
         // This is expected to occur ~80% of the time in the worst scenarios
       }
     }
 
+    return numEntries.get();
+  }
+
+  private void factorizeAggs(
+      AggregatorFactory[] metrics,
+      Aggregator[] aggs,
+      ThreadLocal<InputRow> rowContainer,
+      InputRow row
+  )
+  {
+    rowContainer.set(row);
+    for (int i = 0; i < metrics.length; i++) {
+      final AggregatorFactory agg = metrics[i];
+      aggs[i] = agg.factorize(selectors.get(agg.getName()));
+    }
+    rowContainer.set(null);
+  }
+
+  private void doAggregate(
+      Aggregator[] aggs,
+      ThreadLocal<InputRow> rowContainer,
+      InputRow row,
+      boolean reportParseExceptions
+  )
+  {
     rowContainer.set(row);
 
     for (Aggregator agg : aggs) {
       synchronized (agg) {
-        agg.aggregate();
+        try {
+          agg.aggregate();
+        }
+        catch (ParseException e) {
+          // "aggregate" can throw ParseExceptions if a selector expects something but gets something else.
+          if (reportParseExceptions) {
+            throw new ParseException(e, "Encountered parse error for aggregator[%s]", agg.getName());
+          } else {
+            log.debug(e, "Encountered parse error, skipping aggregator[%s].", agg.getName());
+          }
+        }
       }
     }
 
     rowContainer.set(null);
-
-
-    return numEntries.get();
   }
 
   protected Aggregator[] concurrentGet(int offset)
@@ -272,11 +319,13 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
     }
   }
 
-  static class OnHeapDimDim implements DimDim
+  static class OnHeapDimDim<T extends Comparable<? super T>> implements DimDim<T>
   {
-    private final Map<String, Integer> valueToId = Maps.newHashMap();
+    private final Map<T, Integer> valueToId = Maps.newHashMap();
+    private T minValue = null;
+    private T maxValue = null;
 
-    private final List<String> idToValue = Lists.newArrayList();
+    private final List<T> idToValue = Lists.newArrayList();
     private final Object lock;
 
     public OnHeapDimDim(Object lock)
@@ -284,7 +333,7 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
       this.lock = lock;
     }
 
-    public int getId(String value)
+    public int getId(T value)
     {
       synchronized (lock) {
         final Integer id = valueToId.get(value);
@@ -292,14 +341,14 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
       }
     }
 
-    public String getValue(int id)
+    public T getValue(int id)
     {
       synchronized (lock) {
         return idToValue.get(id);
       }
     }
 
-    public boolean contains(String value)
+    public boolean contains(T value)
     {
       synchronized (lock) {
         return valueToId.containsKey(value);
@@ -313,7 +362,7 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
       }
     }
 
-    public int add(String value)
+    public int add(T value)
     {
       synchronized (lock) {
         Integer prev = valueToId.get(value);
@@ -323,8 +372,22 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
         final int index = size();
         valueToId.put(value, index);
         idToValue.add(value);
+        minValue = minValue == null || minValue.compareTo(value) > 0 ? value : minValue;
+        maxValue = maxValue == null || maxValue.compareTo(value) < 0 ? value : maxValue;
         return index;
       }
+    }
+
+    @Override
+    public T getMinValue()
+    {
+      return minValue;
+    }
+
+    @Override
+    public T getMaxValue()
+    {
+      return maxValue;
     }
 
     public OnHeapDimLookup sort()
@@ -335,19 +398,19 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
     }
   }
 
-  static class OnHeapDimLookup implements SortedDimLookup
+  static class OnHeapDimLookup<T extends Comparable<? super T>> implements SortedDimLookup<T>
   {
-    private final String[] sortedVals;
+    private final List<T> sortedVals;
     private final int[] idToIndex;
     private final int[] indexToId;
 
-    public OnHeapDimLookup(List<String> idToValue, int length)
+    public OnHeapDimLookup(List<T> idToValue, int length)
     {
-      Map<String, Integer> sortedMap = Maps.newTreeMap();
+      Map<T, Integer> sortedMap = Maps.newTreeMap();
       for (int id = 0; id < length; id++) {
         sortedMap.put(idToValue.get(id), id);
       }
-      this.sortedVals = sortedMap.keySet().toArray(new String[length]);
+      this.sortedVals = Lists.newArrayList(sortedMap.keySet());
       this.idToIndex = new int[length];
       this.indexToId = new int[length];
       int index = 0;
@@ -361,23 +424,23 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
     @Override
     public int size()
     {
-      return sortedVals.length;
+      return sortedVals.size();
     }
 
     @Override
-    public int indexToId(int index)
+    public int getUnsortedIdFromSortedId(int index)
     {
       return indexToId[index];
     }
 
     @Override
-    public String getValue(int index)
+    public T getValueFromSortedId(int index)
     {
-      return sortedVals[index];
+      return sortedVals.get(index);
     }
 
     @Override
-    public int idToIndex(int id)
+    public int getSortedIdFromUnsortedId(int id)
     {
       return idToIndex[id];
     }
